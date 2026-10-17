@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ProtonMailMcp/ProtonMailMcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ProtonMailMcp.Tests/ProtonMailMcp.Tests.csproj" />
+  </Folder>
+</Solution>
