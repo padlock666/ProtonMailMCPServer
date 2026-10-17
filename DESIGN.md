@@ -1,6 +1,6 @@
 # Approved MVP design
 
-Status: approved by the project owner on 2026-10-17; Phase 1 foundation implemented. Mailbox adapter and tool behavior below remain requirements for later phases. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
+Status: approved by the project owner on 2026-10-17; Phases 1 and 2 implemented with offline evidence. The mailbox adapter is implemented; MCP tool contracts remain Phase 3 work and live Bridge acceptance remains Phase 4. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
 
 ## Goals and scope
 
@@ -80,6 +80,16 @@ Return the summary, main text body, attachment metadata, and explicit content/tr
 - Do not fetch alternate bodies or attachments to bypass a size limit.
 
 Use structured results supported by the selected official SDK version. Freeze exact JSON property names and error-code spellings with tool contract tests in Phase 3; preserve the behavior specified here.
+
+## Phase 2 application boundary
+
+`IReadOnlyMailbox` now exposes `ListFoldersAsync`, `SearchAsync`, and `GetMessageAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. No MCP tool is registered in this phase; JSON names and tool error spellings remain Phase 3 work.
+
+The adapter requests UID summaries and BODYSTRUCTURE before any body transfer. A top-level text body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. The MailKit folder stream factory rejects literals over 1 MiB before allocation, and bounded backing streams also reject oversized writes. MIME transfer/charset decoding is strict; malformed text returns `Malformed`. MimeKit's tokenizer converts HTML to plain text without evaluating markup or retrieving references. Primary body candidates are checked to exclude attached text, attachment containers, and attached messages.
+
+Returned subject/address fields are capped at 4,096 characters each, attachment filenames at 1,024, MIME types at 256, and attachment metadata at 100 entries with `AttachmentsTruncated`. Control characters are removed from metadata; body text preserves line breaks and tabs. Search substrings are nonblank, control-free, and capped at 1,024 characters. These bounds constrain output, not MailKit's internal metadata parsing or the total matching UID list.
+
+Malformed protocol responses and unexpected disconnections map to a sanitized Bridge-unavailable error; explicit rejected commands and unconfirmed read-only access map to a sanitized protocol error. Error objects retain no underlying exception or server text. Successful sessions use LOGOUT; failed/cancelled sessions dispose immediately, with no folder close and no retry. A post-logout token check enforces the deadline even when MailKit absorbs cancellation during logout.
 
 ## Connection lifecycle and failure handling
 

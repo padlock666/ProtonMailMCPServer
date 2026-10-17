@@ -1,6 +1,6 @@
 # Development and handoff guide
 
-Phase 1 is implemented. The build commands and external configuration below are operational; mailbox operations, MCP tools, and Bridge handoff remain later-phase work.
+Phases 1 and 2 are implemented. The build commands, external configuration, and internal read-only adapter are operational with synthetic protocol evidence; MCP tools and live Bridge handoff remain later-phase work.
 
 ## Working with Codex
 
@@ -14,9 +14,13 @@ Completed Phase 1 request:
 
 > Implement Phase 1 in PLAN.md. Read AGENTS.md and the linked documents first. Establish the .NET 10 solution, configuration validation, stdio host, and offline test foundation. Preserve the approved scope and security boundaries. Do not connect to my Bridge or mailbox. Run the relevant checks, update the phase checklist and evidence ledger, and report what remains.
 
-Example continuation:
+Completed Phase 2 request:
 
 > Implement Phase 2 in PLAN.md using synthetic protocol fixtures. Verify the actual MailKit adapter uses read-only folder selection and PEEK, including failure and cleanup paths. Update the acceptance evidence without adding MCP features or contacting a live mailbox.
+
+Example continuation:
+
+> Implement Phase 3 in PLAN.md using the tested adapter and synthetic fixtures. Register only the three approved MCP tools, verify them through the official SDK client, and update acceptance evidence. Do not contact a live mailbox.
 
 A request for one phase authorizes that phase; a request for the full implementation can authorize all planned implementation work. Live mailbox access remains a deliberate opt-in with operator-supplied test configuration, as specified in the testing guide.
 
@@ -36,7 +40,7 @@ Reserve **Extra high** for a difficult unresolved adapter issue or security ques
 
 These settings apply to the coding assistant used to develop the server. Select the model and effort available in your Codex client; the application itself does not call a model API. Revisit the recommendation if model availability changes. Model choice does not replace the required protocol tests, live acceptance evidence, or code review.
 
-Proceed one implementation phase at a time; Phase 2 is next after review of Phase 1 evidence. Review each phase's changes and acceptance evidence in `PLAN.md` before beginning the next phase. Keep live Bridge validation in Phase 4, after the protocol tests pass.
+Proceed one implementation phase at a time; Phase 3 is next after review of Phase 2 evidence. Review each phase's changes and acceptance evidence in `PLAN.md` before beginning the next phase. Keep live Bridge validation in Phase 4, after the protocol tests pass.
 
 ## Toolchain and layout
 
@@ -62,7 +66,7 @@ dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Cate
 
 Offline here means no Proton/Bridge account access; initial NuGet restore may need package-network access. Do not claim an offline package restore without a populated cache.
 
-For focused verification, select `Unit` or `Mcp`. `Protocol` tests arrive in Phase 2. Phase 4 defines an additional explicit opt-in for `LiveBridge`; live tests never run as part of the ordinary test command. Record checks actually run, failures, and environmental limits in `PLAN.md`.
+For focused verification, select `Unit`, `Protocol`, or `Mcp`. `Protocol` exercises the actual adapter against synthetic TLS/IMAP sessions. Phase 4 defines an additional explicit opt-in for `LiveBridge`; live tests never run as part of the ordinary test command. Record checks actually run, failures, and environmental limits in `PLAN.md`.
 
 ## Pinned dependencies and verification sources
 
@@ -72,7 +76,7 @@ For focused verification, select `Unit` or `Mcp`. `Protocol` tests arrive in Pha
 | --- | --- | --- |
 | ModelContextProtocol / Core | 2.2.0 | Official stdio/Generic Host SDK; net10.0 assets and APIs verified from restored XML docs, package metadata, and process tests |
 | Microsoft.Extensions.Hosting | 10.0.13 | Generic Host without ASP.NET hosting; explicit defaults disabled |
-| MailKit / transitive MimeKit | 4.18.1 / 4.18.1 | Compatible pinned mail stack, reserved for Phase 2; no adapter or network calls yet |
+| MailKit / transitive MimeKit | 4.18.1 / 4.18.1 | Pinned mail stack verified by the Phase 2 synthetic protocol suite |
 | System.Security.Cryptography.Pkcs | 10.0.13 | Direct override of MimeKit's vulnerable 10.0.0 minimum |
 | Microsoft.NET.Test.Sdk | 18.11.0 | VSTest runner for net10.0 |
 | xUnit / Visual Studio adapter | 2.9.3 / 4.0.1 | xUnit v2 tests and compatible adapter |
@@ -83,55 +87,13 @@ For an intentional dependency update, edit exact package references, run `dotnet
 
 In this execution environment, restore used `--packages /tmp/protonmcp-packages` and commands used `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet` to keep cache and first-run state in writable temporary locations. Neither is required in a normal developer shell. Network access was needed for NuGet; no offline-cache-only restore is claimed.
 
-## External configuration
+## Configuration and usage documentation
 
-Supply `--config /absolute/path/to/config.json` with a configuration file outside the repository, preferably in a private XDG configuration directory. All referenced file paths must also be absolute. The application reads only that JSON file; appsettings, environment variables, and extra command-line overrides are not configuration sources. Operators must keep all real configuration and secrets outside the checkout; runtime does not infer repository boundaries.
+[CONFIGURATION.md](CONFIGURATION.md) is the operator reference for JSON settings, file locations, permissions, allowlists, credentials, TLS pins, and configuration changes. [USAGE.md](USAGE.md) covers building, stdio launch, current capabilities, limits, diagnostics, and live acceptance status. Keep operational instructions in those guides and link to them from the README rather than maintaining duplicate setup instructions here.
 
-The approved settings are:
+When implementation changes affect settings or validation, update `CONFIGURATION.md` and [examples/config.example.json](../examples/config.example.json) in the same task. Keep the example synchronized with the documented JSON and use placeholders only. When they affect launch arguments, client setup, exposed tools/contracts, results, limits, diagnostics, shutdown, or supported workflows, update `USAGE.md`. Review both guides for each implementation phase, including changes to readiness or live evidence, and update their README links/descriptions if needed. Document only implemented behavior as available; label planned interfaces and unverified Bridge compatibility explicitly.
 
-| Setting | Meaning |
-| --- | --- |
-| Host | Literal loopback IP; default `127.0.0.1` |
-| IMAP port | Explicit value copied from Bridge settings |
-| TLS mode | Explicit required STARTTLS or TLS-on-connect, matching Bridge |
-| Username | Bridge IMAP username |
-| Password-file path | Separate external owner-only file with Bridge-generated password |
-| Public-certificate path | Exported Bridge certificate; never its private key |
-| Allowed folders | Explicit nonempty full-name list; setup starts with `INBOX` |
-
-Do not infer TLS mode from a port or assume Bridge uses default ports. Use Bridge's displayed settings. The case-sensitive keys and accepted values are shown below; unknown keys fail startup.
-
-Example JSON uses placeholders only and is not an instruction to configure a live mailbox during Phase 1:
-
-```json
-{
-  "Host": "127.0.0.1",
-  "Port": 1143,
-  "TlsMode": "StartTls",
-  "Username": "<bridge-imap-username>",
-  "PasswordFile": "/absolute/private/directory/bridge.password",
-  "CertificateFile": "/absolute/private/directory/bridge-public.pem",
-  "AllowedFolders": ["INBOX"]
-}
-```
-
-Use the port and TLS mode displayed by Bridge; `1143` is illustrative. Accepted modes are exactly `StartTls` (mandatory STARTTLS) and `SslOnConnect`. IPv4 must use canonical dotted decimal; IPv6 literal loopback is also supported. Hostnames, scoped addresses, and alternate IPv4 spellings fail. `Host` alone may be omitted to use `127.0.0.1`. All other settings are required. Allowlists support up to 256 entries of at most 1,024 characters each and match exact folder names, with case-insensitive `INBOX` only; wildcards, blank entries, and control characters fail.
-
-The public certificate must be a single PEM certificate or DER X.509 certificate, within its validity period. Private-key bundles and PKCS#12 are rejected. Configuration/certificate files are capped at 64 KiB each. The UTF-8 password file is capped at 4 KiB, accepts one terminal LF/CRLF, preserves spaces, and rejects embedded control characters or an empty password.
-
-On Linux the password file must be regular, readable, owned by the effective user, and have no group/other or special permission bits (typically `0600` or `0400`). Its immediate containing directory must also be user-owned and private (normally `0700`). `open`/`openat` use `O_NOFOLLOW`, `O_NONBLOCK`, and `O_CLOEXEC`; `statx(AT_EMPTY_PATH)` validates the actual opened handles before reading. Final-component symlinks for the file and its immediate parent are rejected. Keep ancestor directories trusted. Linux `statx` support is required; failure is closed. Startup never changes file permissions.
-
-Launch the built artifact so build output cannot enter MCP stdout:
-
-```bash
-dotnet src/ProtonMailMcp/bin/Release/net10.0/ProtonMailMcp.dll --config /absolute/path/to/config.json
-```
-
-A parent MCP client normally owns stdin/stdout; this is not an interactive mail command. Phase 1 supports initialization only and advertises no tools, resources, or prompts. It never instantiates an IMAP client. The validated certificate bytes are retained for Phase 2 pin enforcement; local certificate loading alone does not establish network TLS safety.
-
-Startup configuration errors exit `2` with a fixed `startup: configuration_...` stderr diagnostic. Other host failures exit `1` with `host: failed`; normal shutdown exits `0`. Framework/SDK logs are filtered off, the console provider targets stderr, and application diagnostics use fixed codes without raw exceptions. Environment logging overrides cannot enable payload logs. Future operation logging must retain the same sanitization boundary.
-
-The password file must meet the ownership/permission requirements in `SECURITY.md`. Credentials do not belong in launch arguments, checked-in VS Code files, examples, logs, or test fixtures. The server never needs the Proton account password.
+Validate local Markdown links, fenced JSON examples, command paths/options, and documented defaults/limits against the implementation. Use synthetic fixtures for verification; documentation work does not authorize credential discovery or live mailbox access. Record checks actually run and remaining limitations in `PLAN.md`.
 
 ## Later VS Code and client setup
 
@@ -146,6 +108,7 @@ The server process has no HTTP listener or MCP OAuth flow in this design. The pa
 At the end of each implementation task:
 
 - Update only completed acceptance checkboxes, and record actual verification evidence in `PLAN.md`.
+- Review [CONFIGURATION.md](CONFIGURATION.md) and [USAGE.md](USAGE.md), updating affected settings, workflows, capabilities, limits, and troubleshooting in the same task; keep README links current.
 - Update design/interface documentation if implementation exposes a necessary clarification; raise safety/scope changes before implementing them.
 - State pending work and limitations clearly, especially unrun live tests.
 - Review changed files for credentials, real mail, unbounded reads, stdout contamination, and read/write IMAP paths.

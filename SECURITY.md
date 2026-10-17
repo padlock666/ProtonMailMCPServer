@@ -1,6 +1,6 @@
 # Security boundaries
 
-This is a security design and implementation checklist. Phase 1 implements local configuration, public-certificate, and secret-file validation only. Network TLS pin enforcement and mailbox controls remain unimplemented; implementation evidence is in [PLAN.md](PLAN.md).
+This is a security design and implementation checklist. Phases 1 and 2 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol evidence. Real Bridge behavior remains unverified; implementation evidence is in [PLAN.md](PLAN.md).
 
 ## Assets and trust model
 
@@ -31,7 +31,7 @@ Every selected folder opens using `FolderAccess.ReadOnly`, which MailKit impleme
 
 Protocol tests must fail on unexpected commands, including `SELECT`, `STORE`/`UID STORE`, `APPEND`, `COPY`/`UID COPY`, `MOVE`/`UID MOVE`, `EXPUNGE`/`UID EXPUNGE`, `CLOSE`, `CREATE`, `DELETE`, `RENAME`, `SUBSCRIBE`, and `UNSUBSCRIBE`. Do not rely only on a blacklist or assume a tool annotation prevents writes: fixture scripts should admit only the read/session commands needed for the tested operation.
 
-MailKit's current implementation uses [EXAMINE for read-only selection](https://raw.githubusercontent.com/jstedfast/MailKit/master/MailKit/Net/Imap/ImapFolder.cs) and [PEEK for body retrieval](https://raw.githubusercontent.com/jstedfast/MailKit/master/MailKit/Net/Imap/ImapFolderFetch.cs). Test the actual pinned release, including implicit commands and cleanup paths.
+MailKit's current implementation uses [EXAMINE for read-only selection](https://raw.githubusercontent.com/jstedfast/MailKit/4.18.1/MailKit/Net/Imap/ImapFolder.cs) and [PEEK for body retrieval](https://raw.githubusercontent.com/jstedfast/MailKit/4.18.1/MailKit/Net/Imap/ImapFolderFetch.cs). Test the actual pinned release, including implicit commands and cleanup paths.
 
 ## TLS and endpoint policy
 
@@ -58,7 +58,7 @@ Production logs may contain operation name, correlation ID, duration, and saniti
 
 ## Resource limits and untrusted content
 
-Maximum search results: 50, default 20. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
+Maximum search results: 50, default 20. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
 
 Do not buffer an entire message or attachment to enforce a body-only limit afterward. Bound MIME/conversion work and return explicit metadata-only content status if the selected body cannot be read safely. Keep failures distinct from successful empty searches.
 

@@ -2,7 +2,11 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** Phase 1 foundation implemented: .NET 10 solution, validated external configuration, stdio initialization, and synthetic offline tests. Mailbox operations and the three tools remain unimplemented. No Bridge or live-mail validation has been performed. See [PLAN.md](PLAN.md) for evidence and remaining phases.
+**Status:** Phases 1 and 2 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three MCP tools remain unimplemented. No Bridge or live-mail validation has been performed. See [PLAN.md](PLAN.md) for evidence and remaining phases.
+
+## Configuration and usage
+
+Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder allowlists, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The current host supports initialization only; mailbox tools are still pending.
 
 ## MVP
 
@@ -19,6 +23,8 @@ There is no HTTP service, body search, attachment download, background synchroni
 
 | Document | Purpose |
 | --- | --- |
+| [Configuration guide](docs/CONFIGURATION.md) | Settings, file permissions, credentials, allowlists, and TLS pins |
+| [Usage guide](docs/USAGE.md) | Build/verification, stdio launch, current capabilities, and troubleshooting |
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
@@ -42,4 +48,4 @@ The server receives decrypted mail from Bridge. Only configured folders are expo
 
 ## Next step
 
-Review Phase 1 evidence, then request Phase 2 using the [development guide](docs/DEVELOPMENT.md). Phase 2 implements the read-only adapter against synthetic protocol fixtures; live acceptance remains Phase 4.
+Review Phase 2 evidence, then request Phase 3 using the [development guide](docs/DEVELOPMENT.md). Phase 3 adds the three approved MCP tools; live acceptance remains Phase 4.

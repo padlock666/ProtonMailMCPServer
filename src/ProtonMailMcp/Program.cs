@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ProtonMailMcp.Configuration;
+using ProtonMailMcp.Mail;
 
 try
 {
@@ -24,6 +25,7 @@ try
     // Application diagnostics are fixed codes written directly to stderr below.
     builder.Logging.AddFilter(_ => false);
     builder.Services.AddSingleton(settings);
+    builder.Services.AddSingleton<IReadOnlyMailbox, MailKitMailbox>();
     builder.Services.AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation { Name = "ProtonMailMcp", Version = "0.1.0" };

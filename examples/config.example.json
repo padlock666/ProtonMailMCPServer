@@ -1,0 +1,9 @@
+{
+  "Host": "127.0.0.1",
+  "Port": 1143,
+  "TlsMode": "StartTls",
+  "Username": "<bridge-imap-username>",
+  "PasswordFile": "/absolute/private/directory/bridge.password",
+  "CertificateFile": "/absolute/private/directory/bridge-public.pem",
+  "AllowedFolders": ["INBOX"]
+}

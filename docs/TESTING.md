@@ -1,6 +1,6 @@
 # Test strategy
 
-Status: Phase 1 includes configuration unit tests, a category-discovery check, and stdio host process tests. Adapter protocol, tool-contract, and live suites below remain planned. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
+Status: Phases 1 and 2 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and stdio host process tests. MCP tool-contract and live suites remain planned. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
 
 Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge groups. Unit/protocol/process tests use synthetic messages and must run without a Proton account, personal credentials, or a running Bridge instance.
 
@@ -88,6 +88,18 @@ For dependency changes, update the lock file intentionally before validating loc
 
 Synthetic fixtures generate temporary public PEM/DER certificates and a fake password in a private directory. No checked-in credentials or certificates are needed. Tests cover required fields, strict loopback addresses, required TLS modes, allowlists, bounded files, certificate dates/formats, password modes/private parent directory, final-component symlinks, directories/FIFOs, opened-handle replacement, cancellation, and sanitized diagnostics. Owner UID is checked on the opened file and parent directory; a foreign-owner integration case is not exercised because it would require ownership-changing privileges.
 
-The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. No `Protocol` or `LiveBridge` tests exist yet; Phase 1 process tests do not establish any mailbox read-only or Bridge compatibility claim.
+The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. Phase 2 adds `Protocol` tests; no `LiveBridge` tests exist yet. The initialization-only process tests establish neither tool contracts nor real Bridge compatibility.
 
 Linux is required for the suite, including `mkfifo` for a synthetic special-file regression. Some restricted runners block VSTest's local control socket and MSBuild/compiler IPC; grant runner IPC permission or use an environment that permits it. This does not authorize Bridge access.
+
+## Phase 2 coverage and limitations
+
+`Fixtures/ScriptedImapServer.cs` listens only on an ephemeral loopback port and generates an isolated synthetic TLS certificate. Ordered session scripts admit exact expected commands, then require socket closure; extra commands or connections fail. Tests execute the actual `MailKitMailbox`, not a mock of `IReadOnlyMailbox`. MailKit's initial namespace/INBOX metadata discovery is included in each authenticated script; only allowlisted selectable folders are returned and only approved folders may be opened.
+
+Protocol evidence covers both required TLS modes, peer pin mismatch/expiry/future validity, absent STARTTLS, authentication rejection, EXAMINE with read-only confirmation, rejection of READ-WRITE or failed EXAMINE, UID-only retrieval, body-structure-first selection, top-level `BODY.PEEK[TEXT]`, nested PEEK sections, attachment-only/unsupported/missing bodies, attachment metadata caps, exact 1 MiB transfers, oversized advertised and actual literals, and output truncation. Search fixtures verify default 20/maximum 50 summaries, descending UIDs, AND filters, To/Cc OR semantics, delivery-date boundaries, unread tri-state, absent metadata, and empty results.
+
+Failure scripts require disposal without CLOSE or any unrequested command, then verify a fresh successful connection. They cover stale/missing/vanished UIDs, malformed protocol replies, rejected fetches, broken sockets, cancellation during a partial literal, cancellation while queued, search timeout, and stalled logout. A controlled deadline clock verifies the production 30-second timer is armed before gate acquisition and that a queued timeout does not release another operation's gate. Pending-connection checks verify queued callers cannot start a concurrent session.
+
+MIME unit tests cover alternative/related primary-body selection, attached text and nested-message exclusion, plain/HTML conversion, empty content, strict UTF-8 and legacy charset handling, malformed transfer encodings, output/control/surrogate bounds, and bounded stream writes. HTML links/images remain data; the conversion contains no renderer or network client. Protocol responses and all credential strings are synthetic and are never produced by application logging.
+
+No Proton account, personal data, Bridge endpoint, or operator credentials are used. These tests establish pinned MailKit behavior against the scripts, not real Bridge compatibility or persistent flag preservation on Bridge. Phase 4 remains incomplete. Search result UID sets and MailKit metadata parsing are not promised constant-memory for arbitrarily large mailboxes; transfer and returned-result caps still apply.
