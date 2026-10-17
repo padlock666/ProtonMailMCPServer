@@ -1,6 +1,6 @@
 # Development and handoff guide
 
-Phases 1 and 2 are implemented. The build commands, external configuration, and internal read-only adapter are operational with synthetic protocol evidence; MCP tools and live Bridge handoff remain later-phase work.
+Phases 1–3 are implemented. The build commands, external configuration, and internal read-only adapter are operational with synthetic protocol evidence. The three MCP tools have synthetic process evidence; Phase 4 tooling and handoff documentation are implemented, with live verification pending.
 
 ## Working with Codex
 
@@ -18,7 +18,7 @@ Completed Phase 2 request:
 
 > Implement Phase 2 in PLAN.md using synthetic protocol fixtures. Verify the actual MailKit adapter uses read-only folder selection and PEEK, including failure and cleanup paths. Update the acceptance evidence without adding MCP features or contacting a live mailbox.
 
-Example continuation:
+Completed Phase 3 request:
 
 > Implement Phase 3 in PLAN.md using the tested adapter and synthetic fixtures. Register only the three approved MCP tools, verify them through the official SDK client, and update acceptance evidence. Do not contact a live mailbox.
 
@@ -40,7 +40,7 @@ Reserve **Extra high** for a difficult unresolved adapter issue or security ques
 
 These settings apply to the coding assistant used to develop the server. Select the model and effort available in your Codex client; the application itself does not call a model API. Revisit the recommendation if model availability changes. Model choice does not replace the required protocol tests, live acceptance evidence, or code review.
 
-Proceed one implementation phase at a time; Phase 3 is next after review of Phase 2 evidence. Review each phase's changes and acceptance evidence in `PLAN.md` before beginning the next phase. Keep live Bridge validation in Phase 4, after the protocol tests pass.
+Proceed one implementation phase at a time; Phase 4 live acceptance remains pending explicit authorization and configuration. Review each phase's changes and acceptance evidence in `PLAN.md` before beginning the next phase. Keep live Bridge validation in Phase 4, after the protocol tests pass.
 
 ## Toolchain and layout
 
@@ -66,7 +66,7 @@ dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Cate
 
 Offline here means no Proton/Bridge account access; initial NuGet restore may need package-network access. Do not claim an offline package restore without a populated cache.
 
-For focused verification, select `Unit`, `Protocol`, or `Mcp`. `Protocol` exercises the actual adapter against synthetic TLS/IMAP sessions. Phase 4 defines an additional explicit opt-in for `LiveBridge`; live tests never run as part of the ordinary test command. Record checks actually run, failures, and environmental limits in `PLAN.md`.
+For focused verification, select `Unit`, `Protocol`, or `Mcp`. `Protocol` exercises the actual adapter against synthetic TLS/IMAP sessions. Phase 4 implements an additional explicit opt-in for `LiveBridge`; live tests never run as part of the ordinary test command. Record checks actually run, failures, and environmental limits in `PLAN.md`.
 
 ## Pinned dependencies and verification sources
 
@@ -95,9 +95,43 @@ When implementation changes affect settings or validation, update `CONFIGURATION
 
 Validate local Markdown links, fenced JSON examples, command paths/options, and documented defaults/limits against the implementation. Use synthetic fixtures for verification; documentation work does not authorize credential discovery or live mailbox access. Record checks actually run and remaining limitations in `PLAN.md`.
 
-## Later VS Code and client setup
+## VS Code build, test and debug
 
-Phase 4 will provide build/debug tasks and complete MCP client setup against the implemented mailbox tools. Any launch example must use placeholders and external configuration paths. Do not check in personal paths, usernames, or credentials.
+Install the Microsoft C# extension and open `ProtonMailMcp.slnx`. Build and run synthetic tests with the commands above. A workspace task can use the following `.vscode/tasks.json`; no task sets live opt-in variables:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-release", "type": "process", "command": "dotnet",
+      "args": ["build", "ProtonMailMcp.slnx", "--configuration", "Release", "--no-restore"],
+      "problemMatcher": "$msCompile", "group": "build"
+    },
+    {
+      "label": "test-synthetic", "type": "process", "command": "dotnet",
+      "args": ["test", "ProtonMailMcp.slnx", "--configuration", "Release", "--no-build", "--filter", "Category!=LiveBridge"],
+      "dependsOn": "build-release", "problemMatcher": "$msCompile", "group": "test"
+    }
+  ]
+}
+```
+
+Run locked restore first. Use C# Test Explorer to debug a `Unit`, `Protocol` or `Mcp` test; the synthetic fixtures supply their own isolated settings. For application breakpoints, start the host via a trusted synthetic SDK client and attach the debugger to that child process, leaving stdio owned by the client. An optional `.vscode/launch.json` attach configuration is:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to synthetic MCP host", "type": "coreclr", "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}
+```
+
+Select only the known synthetic child process. Breakpoints can trigger the fixed operation deadline; do not change production limits to debug. These examples follow [Microsoft's C# debugger configuration](https://code.visualstudio.com/docs/csharp/debugger-settings); interactive VS Code setup remains unverified. [USAGE.md](USAGE.md#vs-code-mcp-launch) gives the stdio client configuration and [LINUX-SETUP.md](LINUX-SETUP.md) covers Bridge setup. Keep personal paths, usernames, and credentials out of tracked launch files.
 
 Debug using a synthetic IMAP fixture by default. Launch the built executable for MCP use so build banners do not enter stdout. Configure logging to stderr and inspect debugger/log output for accidental content leakage before testing real mail.
 

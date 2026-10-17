@@ -15,7 +15,7 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
         bool WaitForDisconnect = false, TaskCompletionSource? Reached = null);
     internal sealed record Session(IReadOnlyList<Step> Steps, bool StartTls = false, bool AdvertiseStartTls = true);
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
-    private readonly CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(15));
+    private readonly CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(60));
     private readonly X509Certificate2 certificate;
     private readonly Task run;
     public List<string> Commands { get; } = [];

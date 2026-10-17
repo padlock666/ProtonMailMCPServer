@@ -1,6 +1,6 @@
 # Security boundaries
 
-This is a security design and implementation checklist. Phases 1 and 2 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol evidence. Real Bridge behavior remains unverified; implementation evidence is in [PLAN.md](PLAN.md).
+This is a security design and implementation checklist. Phases 1–3 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol and official SDK process evidence. Real Bridge behavior remains unverified; implementation evidence is in [PLAN.md](PLAN.md).
 
 ## Assets and trust model
 

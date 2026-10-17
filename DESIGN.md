@@ -1,6 +1,6 @@
 # Approved MVP design
 
-Status: approved by the project owner on 2026-10-17; Phases 1 and 2 implemented with offline evidence. The mailbox adapter is implemented; MCP tool contracts remain Phase 3 work and live Bridge acceptance remains Phase 4. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
+Status: approved by the project owner on 2026-10-17; Phases 1–3 implemented with synthetic evidence. The mailbox adapter and MCP contracts are implemented; live Bridge acceptance remains Phase 4. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
 
 ## Goals and scope
 
@@ -79,11 +79,13 @@ Return the summary, main text body, attachment metadata, and explicit content/tr
 - Cap returned body text at 32,000 characters with a truncation indicator. Oversized, missing, malformed, or unsupported bodies yield metadata with an explanatory content status; do not silently report successful full-body retrieval.
 - Do not fetch alternate bodies or attachments to bypass a size limit.
 
-Use structured results supported by the selected official SDK version. Freeze exact JSON property names and error-code spellings with tool contract tests in Phase 3; preserve the behavior specified here.
+Use structured results supported by the selected official SDK version. Exact JSON property names and error-code spellings are frozen by Phase 3 contract tests and documented in [usage](docs/USAGE.md#tool-inputs-and-results).
 
 ## Phase 2 application boundary
 
-`IReadOnlyMailbox` now exposes `ListFoldersAsync`, `SearchAsync`, and `GetMessageAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. No MCP tool is registered in this phase; JSON names and tool error spellings remain Phase 3 work.
+`IReadOnlyMailbox` now exposes `ListFoldersAsync`, `SearchAsync`, and `GetMessageAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. Phase 3 explicitly registers only the three approved MCP tools. JSON uses camelCase properties, lowercase content-status strings, and snake_case error codes; see [usage](docs/USAGE.md#tool-inputs-and-results).
+
+The MCP boundary uses three explicit `McpServerTool` instances, strict JSON deserialization, generated object schemas, and structured results with equivalent JSON text content. It catches runtime failures before SDK error formatting and emits only fixed codes; diagnostics contain only operation, correlation ID, duration, and outcome. Unknown fields, numeric strings, malformed dates, and missing required fields fail before adapter I/O. Received cancellation notifications pass through to the adapter; stdin EOF may drain an active operation to its deadline.
 
 The adapter requests UID summaries and BODYSTRUCTURE before any body transfer. A top-level text body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. The MailKit folder stream factory rejects literals over 1 MiB before allocation, and bounded backing streams also reject oversized writes. MIME transfer/charset decoding is strict; malformed text returns `Malformed`. MimeKit's tokenizer converts HTML to plain text without evaluating markup or retrieving references. Primary body candidates are checked to exclude attached text, attachment containers, and attached messages.
 

@@ -1,6 +1,6 @@
 # Test strategy
 
-Status: Phases 1 and 2 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and stdio host process tests. MCP tool-contract and live suites remain planned. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
+Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
 
 Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge groups. Unit/protocol/process tests use synthetic messages and must run without a Proton account, personal credentials, or a running Bridge instance.
 
@@ -80,7 +80,54 @@ dotnet build ProtonMailMcp.slnx --configuration Release --no-restore
 dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge'
 ```
 
-Phase 4 will document the exact opt-in setting and live command when implemented. Do not publish a runnable real-mail command with personal configuration or credentials embedded.
+The live test is `LiveAcceptance.OperatorPreparedFolderPreservesState`. Category selection without authorization skips it before settings are loaded. Every invocation also checks authorization at runtime. No endpoint/credential discovery occurs. Do not run it until the operator supplies configuration and explicitly authorizes access.
+
+Prepare these **external** files in a private directory outside the checkout (symlink paths resolving into the checkout are rejected):
+
+- A normal application JSON configuration, with exactly one allowed dedicated folder, excluding INBOX. Its password and public-certificate paths must also be external. Existing production secret/TLS validation applies unchanged.
+- A fixture manifest, at most 65,536 bytes, with the case-sensitive schema below. It describes **every** message in the folder (2–50 messages); no automatically adopted baseline is written. Known identifiers must be supplied by the operator through read-only inspection in a separate trusted client. Do not obtain them by inspecting Bridge stores. The suite compares this baseline before and after reads and after failure/recovery stages.
+
+```json
+{
+  "Folder": "<dedicated-Bridge-full-folder-name>",
+  "UidValidity": 7,
+  "Messages": [
+    { "Uid": 41, "Flags": 0, "Keywords": [] },
+    { "Uid": 42, "Flags": 1, "Keywords": [] },
+    { "Uid": 43, "Flags": 8, "Keywords": [] }
+  ],
+  "DeletedState": "present",
+  "PlainUid": 41,
+  "HtmlUid": 42,
+  "AttachmentUid": 43,
+  "PlainTextSha256": "<64-hex-digits>",
+  "HtmlTextSha256": "<64-hex-digits>"
+}
+```
+
+All numbers above are synthetic placeholders. Flags use MailKit persistent bits: Seen=1, Answered=2, Flagged=4, Deleted=8, Draft=16; sum combined bits. Keywords are the exact persistent keyword strings. `Recent` is ignored, and the keyword marker itself is excluded from the bit comparison. At least one fixture must be unread and one read. Plain and HTML UIDs must differ; the attachment may share another role. Use a plain-only primary body and an HTML-only primary body (no plain alternative) so both conversion paths are exercised. SHA-256 values describe the UTF-8 encoding of the exact expected returned text, including whitespace/newlines; prepare these from known fixture text independently, not from the first server result. Keep bodies small and below the output cap. The attachment fixture must have metadata; payload exclusion has synthetic wire evidence rather than live protocol capture.
+
+If Bridge cannot represent a pre-existing deleted flag, set `DeletedState` to `unsupported`, omit that flag from all fixtures, and record the limitation. Such a run cannot satisfy the deleted-flag acceptance criterion. Never modify fixtures during the run to manufacture a state. Keep the manifest private: identifiers, keywords, and hashes belong outside version control and chat.
+
+Only after explicit authorization, run from the repository root with locally substituted external paths:
+
+```bash
+PROTONMCP_LIVE=I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS \
+PROTONMCP_LIVE_CONFIG=/absolute/private/directory/live-config.json \
+PROTONMCP_LIVE_FIXTURES=/absolute/private/directory/live-fixtures.json \
+PROTONMCP_LIVE_STAGE=reads \
+dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category=LiveBridge'
+```
+
+`reads` compares full UID membership/count, UIDVALIDITY, persistent flags and keywords; repeats discovery, unfiltered/unread/read searches and all known fixture reads twice; verifies text hashes and attachment metadata; then tests a random incorrect password and a synthetic wrong pin in isolated in-memory settings. It requires the expected sanitized failures and a fresh successful call with correct settings, followed by another state comparison. These negative tests cause one failed authentication attempt; include that in operator authorization. No settings files are changed. The observer uses only read-only selection and UID/FLAGS metadata, with a 30-second per-session deadline; the whole test has a five-minute deadline. Errors intentionally omit live values and inner exceptions.
+
+For a controlled stop/restart, keep the same manifest, stop Bridge yourself, and invoke the same command with `PROTONMCP_LIVE_STAGE=unavailable`. It requires `bridge_unavailable` without retry. Restart Bridge yourself, wait for sync, and invoke with `PROTONMCP_LIVE_STAGE=recovered`; this repeats state/read checks against the original manifest. A stopped-service check is not evidence of an interrupted active transfer.
+
+Separately, using a trusted MCP client and the same dedicated configuration, deliberately stop Bridge during an active read. Require a sanitized `bridge_unavailable` or `timeout`, no retry or fallback, then restart Bridge and require a fresh successful call and a `recovered` stage against the unchanged manifest. Record this manual connection-loss result separately; the suite never controls Bridge or pauses to solicit operator actions. Do not capture live protocol traces. If the interruption missed the active operation, record it as unverified and repeat only with authorization.
+
+A wrong-pin test proves mismatch rejection; actual certificate rotation remains an operator workflow. If rotating Bridge's certificate deliberately, retain the old public pin, require `tls_failed`, independently export/verify the replacement, restart the MCP host with the new external pin, and repeat `recovered`. Never rotate credentials/certificates or repair/reset Bridge automatically. If UIDVALIDITY changes, the old baseline is stale: stop, investigate, and explicitly re-prepare a baseline; do not silently accept new identities.
+
+Keep opt-in variables scoped to a single command. Do not export them globally or place them in test/build tasks. Ordinary tests explicitly exclude `LiveBridge` even when opt-in exists. Record a skipped live test as **not run**, never as passing live acceptance.
 
 For dependency changes, update the lock file intentionally before validating locked restore. For MailKit changes rerun protocol tests; for Bridge compatibility rerun live acceptance. Record actual results and any skipped tests in [PLAN.md](../PLAN.md).
 
@@ -88,7 +135,7 @@ For dependency changes, update the lock file intentionally before validating loc
 
 Synthetic fixtures generate temporary public PEM/DER certificates and a fake password in a private directory. No checked-in credentials or certificates are needed. Tests cover required fields, strict loopback addresses, required TLS modes, allowlists, bounded files, certificate dates/formats, password modes/private parent directory, final-component symlinks, directories/FIFOs, opened-handle replacement, cancellation, and sanitized diagnostics. Owner UID is checked on the opened file and parent directory; a foreign-owner integration case is not exercised because it would require ownership-changing privileges.
 
-The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. Phase 2 adds `Protocol` tests; no `LiveBridge` tests exist yet. The initialization-only process tests establish neither tool contracts nor real Bridge compatibility.
+The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. Phase 2 adds `Protocol` tests; Phase 4 adds the separately gated `LiveBridge` test. The initialization-only process tests establish neither tool contracts nor real Bridge compatibility.
 
 Linux is required for the suite, including `mkfifo` for a synthetic special-file regression. Some restricted runners block VSTest's local control socket and MSBuild/compiler IPC; grant runner IPC permission or use an environment that permits it. This does not authorize Bridge access.
 
@@ -103,3 +150,13 @@ Failure scripts require disposal without CLOSE or any unrequested command, then 
 MIME unit tests cover alternative/related primary-body selection, attached text and nested-message exclusion, plain/HTML conversion, empty content, strict UTF-8 and legacy charset handling, malformed transfer encodings, output/control/surrogate bounds, and bounded stream writes. HTML links/images remain data; the conversion contains no renderer or network client. Protocol responses and all credential strings are synthetic and are never produced by application logging.
 
 No Proton account, personal data, Bridge endpoint, or operator credentials are used. These tests establish pinned MailKit behavior against the scripts, not real Bridge compatibility or persistent flag preservation on Bridge. Phase 4 remains incomplete. Search result UID sets and MailKit metadata parsing are not promised constant-memory for arbitrarily large mailboxes; transfer and returned-result caps still apply.
+
+## Phase 3 coverage and limitations
+
+`Mcp/ToolTests.cs` launches the built application through the official 2.2.0 SDK client with temporary synthetic settings pinned to `ScriptedImapServer`. Discovery checks exactly the approved names, descriptions, read-only/non-destructive annotations, strict input schemas, required/optional arguments, output properties and content-status spellings. Calls exercise the actual adapter, structured/text result agreement, absent summary fields, complete message identity, filters, unread tri-state, successful empty searches, attachment metadata and truncation, content statuses, and body truncation.
+
+Input failures are tested before any fixture connection. Runtime fixtures cover denied folders, stale epochs, missing messages/folders, rejected authentication, certificate mismatch, protocol rejection, broken connections, an unavailable ephemeral endpoint, and the real production 30-second deadline. Recovery requires a fresh successful connection. The fixture lifetime is 60 seconds to permit the real deadline test; verification still requires ordered commands and socket closure. No production deadline override or test-only server startup flag is exposed.
+
+The SDK cancellation regression sends an explicit `notifications/cancelled` for a known request ID through `McpClient.SendMessageAsync`, asserts the pending SDK request is cancelled, and requires a successful subsequent call within five seconds. Merely cancelling the high-level SDK call's local token did not reliably deliver server cancellation in this environment; do not infer prompt remote cleanup from a cancelled local await. Received cancellation notifications propagate to the adapter. Captured raw stdio tests cover complete tool results and stdin EOF during a stalled LOGOUT: EOF drains the active operation under its existing 30-second deadline, then exits cleanly. It does not promise immediate cancellation on EOF. Child-process termination also closes its sockets; no CLOSE/expunge command is admitted.
+
+SDK client process tests use the initialize-handshake revision `2025-11-25`; the existing default-options client initialization/discovery test is retained as well. Every captured tool diagnostic must match a fixed grammar of operation/correlation/duration/outcome, excluding sensitive fixture values. Separate stdout capture parses every line as MCP JSON and checks the result. Package versions/locks and the adapter implementation are unchanged. These tests establish the MCP contracts and pinned adapter behavior against synthetic scripts, never Bridge compatibility or live flag preservation.

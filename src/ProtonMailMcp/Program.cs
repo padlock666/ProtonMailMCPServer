@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ProtonMailMcp.Configuration;
 using ProtonMailMcp.Mail;
+using ProtonMailMcp.Tools;
 
 try
 {
@@ -29,7 +30,7 @@ try
     builder.Services.AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation { Name = "ProtonMailMcp", Version = "0.1.0" };
-    }).WithStdioServerTransport();
+    }).WithStdioServerTransport().WithTools(MailboxTool.CreateApproved());
     using var host = builder.Build();
     await host.RunAsync();
     return 0;

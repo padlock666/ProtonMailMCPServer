@@ -2,9 +2,9 @@
 
 ## Current state
 
-Design approved on 2026-10-17. Phases 1 and 2 are implemented with passing offline acceptance: the .NET 10 foundation and a read-only MailKit adapter verified against synthetic TLS/IMAP fixtures. No MCP tools exist yet. No Bridge connection or live-mail validation has been performed.
+Design approved on 2026-10-17. Phases 1–3 are implemented: the .NET 10 foundation, read-only MailKit adapter, and three approved MCP tools verified against synthetic TLS/IMAP fixtures through the official SDK client. Phase 4 opt-in tooling and handoff documentation are implemented; live acceptance is not run. No Bridge connection or live-mail validation has been performed.
 
-**Next implementation phase: Phase 3, when requested.** SDK/package pins and lock files are now tracked in the supplied Git baseline; the earlier missing-metadata handoff limitation is resolved. No Phase 2 commit has been made. These checklists are a work ledger; only recorded checks establish evidence. Follow the scope of the user's implementation request; do not assume permission to broaden the MVP or access a personal mailbox.
+**Current scope: Phase 4 implementation requested and completed; live verification awaits operator configuration and explicit authorization.** SDK/package pins and lock files are now tracked in the supplied Git baseline; the earlier missing-metadata handoff limitation is resolved. No Phase 2 commit has been made. These checklists are a work ledger; only recorded checks establish evidence. Follow the scope of the user's implementation request; do not assume permission to broaden the MVP or access a personal mailbox.
 
 Read [DESIGN.md](DESIGN.md), [SECURITY.md](SECURITY.md), and [the testing guide](docs/TESTING.md) before implementing. Routine implementation details within these requirements do not need repeated approval. Surface any proposed change to the approved behavior or safety boundaries.
 
@@ -49,26 +49,26 @@ Acceptance criteria:
 
 Deliverables:
 
-- [ ] Explicitly register `list_folders`, `search_messages`, and `get_message` with useful descriptions and read-only/non-destructive annotations.
-- [ ] Publish structured input/output contracts and sanitized tool error handling using the chosen SDK.
-- [ ] Add process-level SDK client tests for discovery, schemas, results, failures, cancellation, and stdout hygiene.
-- [ ] Update [configuration](docs/CONFIGURATION.md) and [usage](docs/USAGE.md) documentation with the implemented tool contracts and verified client examples. The current guides cover configuration and initialization-only launch; tool usage remains pending.
+- [x] Explicitly register `list_folders`, `search_messages`, and `get_message` with useful descriptions and read-only/non-destructive annotations.
+- [x] Publish structured input/output contracts and sanitized tool error handling using the chosen SDK.
+- [x] Add process-level SDK client tests for discovery, schemas, results, failures, cancellation, and stdout hygiene.
+- [x] Update [configuration](docs/CONFIGURATION.md) and [usage](docs/USAGE.md) documentation with the implemented tool contracts and verified client examples. The guides now document implemented contracts, SDK calls, error codes, and cancellation/shutdown limits.
 
 Acceptance criteria:
 
-- [ ] The official SDK client discovers exactly the three approved tools and successfully calls each using synthetic IMAP data.
-- [ ] Contract tests cover optional filters, input rejection, metadata results, content statuses, and truncation indicators.
-- [ ] Denied folders, stale references, TLS/authentication failures, Bridge outages, and timeouts are communicated without leaking raw exceptions or mailbox data.
-- [ ] Diagnostics do not corrupt stdio, and server termination/cancellation releases resources without expunging.
-- [ ] Unit, protocol, and MCP process suites pass without live credentials.
+- [x] The official SDK client discovers exactly the three approved tools and successfully calls each using synthetic IMAP data.
+- [x] Contract tests cover optional filters, input rejection, metadata results, content statuses, and truncation indicators.
+- [x] Denied folders, stale references, TLS/authentication failures, Bridge outages, and timeouts are communicated without leaking raw exceptions or mailbox data.
+- [x] Diagnostics do not corrupt stdio, and server termination/cancellation releases resources without expunging.
+- [x] Unit, protocol, and MCP process suites pass without live credentials.
 
 ## Phase 4 — Bridge validation and handoff
 
 Deliverables:
 
-- [ ] Implement the opt-in live suite described in [docs/TESTING.md](docs/TESTING.md), requiring an operator-prepared folder and fixture identities.
-- [ ] Document Linux/Bridge setup, public-certificate export and replacement, external credentials/configuration, VS Code build/debug workflow, and stdio client launch.
-- [ ] Document safe troubleshooting for unavailable Bridge, changed credentials/certificates, stale UIDs, limits, and unsupported content.
+- [x] Implement the opt-in live suite described in [docs/TESTING.md](docs/TESTING.md), requiring an operator-prepared folder and fixture identities.
+- [x] Document Linux/Bridge setup, public-certificate export and replacement, external credentials/configuration, VS Code build/debug workflow, and stdio client launch.
+- [x] Document safe troubleshooting for unavailable Bridge, changed credentials/certificates, stale UIDs, limits, and unsupported content.
 - [ ] Record tested SDK/package/Bridge/Linux versions and actual verification outcomes without mailbox data.
 
 Acceptance criteria:
@@ -80,7 +80,7 @@ Acceptance criteria:
 
 ## Definition of done
 
-All four phases meet their acceptance criteria; documentation matches actual behavior; the intended Linux/Bridge combination has live evidence; no excluded feature or write capability is present. Read-only annotations alone, mocked adapter tests alone, or a successful build alone do not establish completion.
+- [ ] MVP complete: all four phases meet their acceptance criteria; documentation matches actual behavior; the intended Linux/Bridge combination has live evidence; no excluded feature or write capability is present. Read-only annotations alone, mocked adapter tests alone, or a successful build alone do not establish completion.
 
 ## Evidence ledger
 
@@ -110,8 +110,37 @@ Update this table after actual implementation/verification. Record date, phase, 
 | 2026-10-17 | Documentation | Python checks across nine Markdown documents: local links/anchors, balanced fences, final newlines, whitespace, JSON parsing, sample keys matched to `ConfigurationDocument`, documented diagnostic codes matched to source; `git diff --check` | Passed. Commands and configuration behavior reviewed against source and existing tests; runtime/build tests were not rerun for this documentation-only change |
 | 2026-10-17 | Documentation | Added `examples/config.example.json`; linked from README/configuration guide; development workflow requires keeping the template synchronized | JSON parsing, equality with the documented example, configuration key/absolute-path/placeholder checks, Markdown links/fences/whitespace, and `git diff --check` passed. Template is not ignored and contains placeholders only; no secret files created, runtime tests rerun, or mailbox contacted |
 
-Phase 1 verification used `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet` for writable tool state. The source/lock files use no machine-specific paths. Local config placement outside the checkout is an operator requirement, not runtime repository-root detection. Linux `statx` is required and fails closed if unavailable. Phase 1 proved local validation/stdio behavior only. Phase 2 now proves peer pin enforcement and adapter protocol safety against synthetic fixtures. Tool contracts and real Bridge compatibility remain unverified until Phases 3 and 4. MailKit metadata parsing and large matching UID sets are not promised constant-memory; transfer and returned-result bounds are enforced. The MVP is incomplete.
+| 2026-10-17 | Phase 3 | Pinned MCP 2.2.0 XML/API documentation and official source at `6fa3825973949a9c4f0cd8af344e15a8db09dc35` reviewed; package and lock files unchanged | Three explicit `McpServerTool` instances; strict case-sensitive camelCase inputs, generated object input/output schemas, structured results plus equivalent JSON text, lowercase content statuses, fixed snake_case tool errors, and stderr-only operation/correlation/duration/outcome diagnostics |
+| 2026-10-17 | Phase 3 | `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet restore ProtonMailMcp.slnx --locked-mode --packages /tmp/protonmcp-packages -m:1` | Passed with NuGet audit access; initial sandbox attempt failed NU1900 because the audit service was unavailable. No audit suppression, version/lock changes, live credentials, or mailbox access |
+| 2026-10-17 | Phase 3 | `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet build ProtonMailMcp.slnx --configuration Release --no-restore` | Passed, zero warnings/errors, with runner IPC permission. Earlier single-node/shared-compilation-disabled builds also passed after schema construction fixes |
+| 2026-10-17 | Phase 3 | Initial full offline suite with `--logger 'trx;LogFileName=phase3.trx' --results-directory /tmp/protonmcp-phase3-results -m:1` | 167 passed, 0 failed, 0 skipped (84 Unit, 40 Protocol, 43 Mcp); final run adds three strict numeric-string/case rejection cases. All gateway sessions use ephemeral synthetic fixtures |
+| 2026-10-17 | Phase 3 | Final `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge' --logger 'trx;LogFileName=phase3-final.trx' --results-directory /tmp/protonmcp-phase3-results` | **170 passed, 0 failed, 0 skipped** (84 Unit, 40 Protocol, 46 Mcp), with runner IPC and synthetic loopback sockets permitted. Release build and locked restore passed; no live mailbox contacted |
+| 2026-10-17 | Phase 3 | Contract, runtime-failure, cancellation, and captured-stdio process regressions through the official SDK client and real adapter | Exactly three tools discovered; optional filters, metadata/nulls, reference identity, all content statuses, body/attachment truncation, input rejection before connections, all ten error categories, TLS-before-auth rejection and fresh-connection recovery covered. Ordered scripts continue to admit only required read/session commands and require disconnect |
+| 2026-10-17 | Phase 3 | Lifecycle regressions and limitations | Explicit SDK `notifications/cancelled` closes a partial-transfer session and permits a subsequent call within five seconds. High-level SDK local-token cancellation did not reliably deliver remote cancellation in this environment; a cancelled local await alone is not cleanup evidence. Stdin EOF drains a stalled LOGOUT under the real 30-second deadline, then exits cleanly. No safety boundary or production deadline changed |
+| 2026-10-17 | Phase 3 | Regressions investigated; source/documentation review | Fixed nullable-root exported schemas rejected by SDK, required an explicit JSON metadata resolver, disabled web-default numeric-string coercion, and adjusted a synthetic MIME-type assertion to preserve adapter output casing. Fixture lifetime extended to 60 seconds solely to observe the production deadline. Standard sandbox test attempt aborted on VSTest socket permission before executing tests; runner IPC/synthetic loopback access was then granted |
+| 2026-10-17 | Phase 3 | Markdown links/anchors/fences/JSON/newlines/whitespace across nine documents, C# whitespace/newlines, `git diff --check`, registration/mailbox source review | Passed. Usage/configuration/README/design/security/testing/development guides match implemented behavior and document SDK cancellation/EOF limits. No mailbox adapter changes, mutation path, assembly discovery, stdout diagnostic logging, new dependencies, or live access; Phase 4 and MVP completion remain pending |
+
+
+| 2026-10-17 | Phase 4 | `dotnet --info`; `/etc/os-release`; existing project pins/lock files reviewed | Synthetic environment: Zorin OS 18.1 (Ubuntu 24.04 family), x64; SDK 10.0.112, runtime 10.0.12; MCP/Core 2.2.0, Hosting/PKCS 10.0.13, MailKit/MimeKit 4.18.1, xUnit 2.9.3, VS adapter 4.0.1, Test SDK 18.11.0 unchanged. Bridge version deliberately not discovered; no live compatibility claim |
+| 2026-10-17 | Phase 4 | `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet restore ProtonMailMcp.slnx --locked-mode --packages /tmp/protonmcp-packages -m:1`; `dotnet build ProtonMailMcp.slnx --configuration Release --no-restore -m:1 -p:UseSharedCompilation=false` with same CLI home | Restore passed, all projects up to date; final build passed, zero warnings/errors. Initial compile found incompatible empty collection for `IReadOnlySet`; corrected before final build. No package/lock changes. The documented normal `dotnet build ProtonMailMcp.slnx --configuration Release --no-restore` also passed with runner IPC permission |
+| 2026-10-17 | Phase 4 | Focused `FullyQualifiedName~LiveAcceptanceSafetyTests\|FullyQualifiedName~LiveObserverTests` Release test filter | 17 passed, zero failed/skipped. External/symlink path rejection, invalid/valid known-fixture manifests, EXAMINE + UID FLAGS snapshot without content, Recent exclusion, persistent keywords, stale observer state disposal verified against synthetic fixtures. Initial full run: 177 passed, 1 failed, 0 skipped (broken-symlink test cleanup); corrected and focused run passed |
+| 2026-10-17 | Phase 4 | `env -u PROTONMCP_LIVE DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet test tests/ProtonMailMcp.Tests/ProtonMailMcp.Tests.csproj --configuration Release --no-build --filter 'Category=LiveBridge'` | Zero passed/failed, one skipped: authorization absent, no settings read and no mailbox connection. This is gate evidence only; live acceptance **not run** |
+
+
+| 2026-10-17 | Phase 4 | Ten Markdown documents checked for local links/anchors, fences, JSON examples, whitespace and final newlines; new C# whitespace/newlines; `git diff --check`; live code safety review | Passed. Added Linux/Bridge installation, operator public-certificate export/replacement, external configuration, VS Code tasks/debug/client launch and safe runtime troubleshooting. Official Proton/Microsoft docs reviewed; interactive setup remains unverified. No SMTP, mutable interface, non-PEEK body fetch, read/write selection, expunge or protocol logging introduced |
+
+| 2026-10-17 | Phase 4 | Final `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge' --logger 'trx;LogFileName=phase4-final.trx' --results-directory /tmp/protonmcp-phase4-results` | **187 passed, 0 failed, 0 skipped**; 46 Mcp, 42 Protocol, 99 Unit. Duration 4m 3s. Initial sandbox invocation failed before tests on MSBuild IPC permissions; successful runs granted runner IPC and synthetic loopback sockets. Live category excluded; no live configuration or Bridge access |
+
+Phase 1 verification used `DOTNET_CLI_HOME=/tmp/protonmcp-dotnet` for writable tool state. The source/lock files use no machine-specific paths. Local config placement outside the checkout is an operator requirement, not runtime repository-root detection. Linux `statx` is required and fails closed if unavailable. Phase 1 proved local validation/stdio behavior only. Phase 2 now proves peer pin enforcement and adapter protocol safety against synthetic fixtures. Tool contracts have Phase 3 synthetic evidence; real Bridge compatibility remains unverified until Phase 4. MailKit metadata parsing and large matching UID sets are not promised constant-memory; transfer and returned-result bounds are enforced. The MVP is incomplete.
 
 ## Deferred work
 
 HTTP/remote hosting, multi-account operation, attachment downloads, body search, pagination, indexing/caching, and background synchronization require a separate product decision. Sending or mailbox mutation is outside this product's read-only purpose, not a later MVP phase.
+
+## Phase 4 handoff and outstanding operator work
+
+The live suite is implemented in `tests/ProtonMailMcp.Tests/LiveBridge/LiveAcceptance.cs`, with a discovery-time skip and runtime authorization check. It requires command-scoped `PROTONMCP_LIVE=I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS`, explicit external configuration/fixture paths, a dedicated single-folder allowlist excluding INBOX, and known identities/full expected membership and persistent flags. Reads and negative password/pin cases use the real adapter; a test-only read-only UID/FLAGS observer compares state to the operator baseline. Plain/HTML fixture output is verified by externally supplied hashes. No live settings were supplied, no credentials were discovered, no Bridge stores were inspected, and no live mailbox connection was attempted.
+
+Before live verification, the operator must follow [Linux setup](docs/LINUX-SETUP.md) and [the exact fixture schema/stages](docs/TESTING.md#opt-in-real-bridge-acceptance): install/start Bridge, export/verify only its public certificate, prepare external credentials/configuration, populate the dedicated folder through a separate client, record all UIDVALIDITY/UID/flag/keyword identities and expected text hashes, pause other writers, and authorize the specific run. The suite never prepares, modifies, or cleans up messages. A pre-existing deleted flag is required for full acceptance; `unsupported` must remain a recorded limitation.
+
+Still unverified: actual Bridge/Linux compatibility, persistent live flags/membership, stopped-service and restart stages, an operator-controlled interruption during an active read, actual certificate replacement, and a fresh VS Code/client setup. Wrong-pin rejection is an automated live scenario, not proof of an actual certificate rotation. The interruption and certificate-replacement procedures are documented operator checks; the suite does not control Bridge. All Phase 4 acceptance criteria and MVP completion remain unchecked. Application behavior, dependencies and lock files are unchanged by Phase 4.

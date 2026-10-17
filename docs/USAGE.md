@@ -1,6 +1,6 @@
 # Usage guide
 
-The current server can load validated configuration and initialize an MCP session over stdio. Phases 1 and 2 are implemented: the internal read-only mailbox adapter has synthetic protocol coverage, but **no MCP tools, resources, or prompts are exposed yet**. This release cannot search or retrieve mail through an MCP client. See [PLAN.md](../PLAN.md) for implementation and acceptance status.
+The server exposes exactly three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. No Bridge version or live mailbox behavior has been validated; see [PLAN.md](../PLAN.md).
 
 ## Build and verify
 
@@ -16,7 +16,7 @@ The standard suite uses synthetic configuration, TLS certificates, and ephemeral
 
 ## Configure the host
 
-Follow the [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder allowlist. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for password-file checks.
+Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder allowlist. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for password-file checks.
 
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
@@ -37,15 +37,15 @@ For a parent MCP client's stdio launch settings, use the following command and a
 | Argument 2 | `--config` |
 | Argument 3 | `/absolute/path/to/config.json` |
 
-The parent client owns stdin/stdout, initializes the MCP session, and closes the transport on shutdown. The process is not an interactive shell for mail commands and does not provide an HTTP endpoint. Stdout is reserved for MCP messages; capture stderr separately and do not merge it into stdout. A missing startup banner is expected. Closing stdin is covered by the synthetic process tests and allows clean shutdown.
+The parent client owns stdin/stdout, initializes the MCP session, and closes the transport on shutdown. The process is not an interactive shell for mail commands and does not provide an HTTP endpoint. Stdout is reserved for MCP messages; capture stderr separately and do not merge it into stdout. A missing startup banner is expected. Closing stdin allows clean shutdown; an active operation may drain until its existing 30-second deadline before exit. For prompt cancellation, send an MCP cancellation notification before closing the transport.
 
-Successful initialization identifies the server as `ProtonMailMcp`. It currently advertises no tools, resources, or prompts. Client-specific installation instructions and mailbox tool-call examples will be added when those interfaces are implemented and tested.
+Successful initialization identifies the server as `ProtonMailMcp`. It advertises the three tools below, with read-only and non-destructive annotations, and no resources or prompts. Initialization and discovery do not connect to Bridge.
 
 ## Mailbox functionality and limits
 
-The internal adapter implements allowlisted folder discovery, typed header/date/unread searches, and UID-based text retrieval. The planned MCP tools are `list_folders`, `search_messages`, and `get_message`; their public contracts remain Phase 3 work. See [DESIGN.md](../DESIGN.md) for approved behavior rather than treating the following as a current callable interface.
+The tools call the tested adapter for allowlisted folder discovery, typed searches, and UID-based text retrieval. The following contracts use case-sensitive camelCase JSON names. Unknown arguments and incorrect JSON types return `invalid_input`. Optional substring/date/unread filters accept omission or null; `limit` must be an integer when supplied.
 
-| Behavior | Implemented adapter boundary |
+| Behavior | Implemented tool boundary |
 | --- | --- |
 | Search | Sender, To/Cc recipient, subject, delivery dates, unread status; default 20 results, maximum 50, highest UIDs first |
 | Message identity | Folder full name + UIDVALIDITY + UID; stale identities are rejected |
@@ -55,7 +55,73 @@ The internal adapter implements allowlisted folder discovery, typed header/date/
 | Connection | One encrypted connection per operation, serialized access, 30-second deadline including queue time |
 | Safety | Read-only folder selection and PEEK; no sending, flag changes, mailbox mutation, or expunging cleanup |
 
-Message content, links, and filenames remain untrusted data. A local client may forward future tool results to a hosted model provider; stdio transport does not guarantee local model processing. Read [SECURITY.md](../SECURITY.md) before enabling real-mail access.
+Message content, links, and filenames remain untrusted data. A local client may forward tool results to a hosted model provider; stdio transport does not guarantee local model processing. Read [SECURITY.md](../SECURITY.md) before enabling real-mail access.
+
+## Tool inputs and results
+
+| Tool | Arguments | Successful structured result |
+| --- | --- | --- |
+| `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable allowed folders |
+| `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `receivedStart`, `receivedEnd`, `unread`, `limit` | `{"messages":[summary],"truncated":false}` |
+| `get_message` | Required `folder`, `uidValidity`, `uid` | `{"summary":summary,"text":"...","contentStatus":"available","truncated":false,"attachments":[],"attachmentsTruncated":false}` |
+
+A summary has `reference` (`folder`, `uidValidity`, `uid`), `from`, `to`, `cc`, `subject`, `senderDate`, `internalDate`, `seen`, and `size`. Optional metadata is explicitly null when absent. Dates in results use ISO 8601 timestamps; size is reported bytes. Preserve all three reference fields from a search result when calling `get_message`; identifiers are integers from 1 through 4,294,967,295.
+
+Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Delivery dates are exact `YYYY-MM-DD`, inclusive start and exclusive end, with start strictly before end if both are supplied. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology. Narrow filters if `truncated` is true.
+
+`contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, and reported `size`. Filenames are data and must never be treated as paths. No attachment payload is returned.
+
+Successes populate MCP `structuredContent` and a text content block containing the same JSON for compatible clients. Tool execution failures set `isError: true`, omit structured content, and return one text block containing only the fixed code below. They never masquerade as empty successful results. Received MCP cancellation notifications cancel the adapter operation and release its connection. With the pinned SDK in this environment, cancelling a high-level client call’s local token did not reliably deliver remote cancellation; a cancelled local await alone is not evidence of server cleanup. The process regression explicitly sends and awaits `notifications/cancelled` for a known request ID using `McpClient.SendMessageAsync`. See the [test evidence](TESTING.md#phase-3-coverage-and-limitations) and [explicit cancellation example in the process tests](../tests/ProtonMailMcp.Tests/Mcp/ToolTests.cs).
+
+| Error code | Meaning |
+| --- | --- |
+| `invalid_input` | Missing, unknown, malformed, or out-of-range arguments |
+| `denied_folder` | Folder is outside the exact allowlist |
+| `folder_unavailable` | Allowed folder is missing or not selectable |
+| `bridge_unavailable` | Connection refused/lost or malformed protocol response |
+| `authentication_failed` | Bridge rejected authentication |
+| `tls_failed` | Required TLS or certificate verification failed |
+| `stale_reference` | UIDVALIDITY changed; search again rather than reuse the UID |
+| `message_not_found` | UID is missing or disappeared during retrieval |
+| `timeout` | The 30-second operation deadline expired, including queue time |
+| `protocol_failure` | Rejected command, unconfirmed read-only access, or unexpected internal failure |
+
+Each completed/cancelled tool call emits a stderr diagnostic containing only operation name, random correlation ID, elapsed milliseconds, and fixed outcome. SDK/framework payload logging remains disabled. No folder, identifier, filters, mail, credentials, or exception text is logged.
+
+## Official SDK client example
+
+The process suite verifies this API shape using pinned `ModelContextProtocol` 2.2.0 and synthetic TLS/IMAP fixtures. Run the suite with `dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category=Mcp'`. The standalone example below requires operator-prepared external configuration; it is not a live acceptance claim.
+
+```csharp
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
+await using var client = await McpClient.CreateAsync(
+    new StdioClientTransport(new StdioClientTransportOptions
+    {
+        Command = "dotnet",
+        Arguments = ["/absolute/path/to/ProtonMailMcp.dll", "--config",
+                     "/absolute/path/to/config.json"],
+        Name = "ProtonMailMcp"
+    }));
+var tools = await client.ListToolsAsync();
+var folders = await client.CallToolAsync("list_folders");
+var search = await client.CallToolAsync("search_messages",
+    new Dictionary<string, object?> { ["folder"] = "INBOX", ["unread"] = true });
+// Check IsError before consuming StructuredContent. Take the reference from a result.
+if (search.IsError != true && search.StructuredContent is { } data &&
+    data.GetProperty("messages").GetArrayLength() > 0)
+{
+    var reference = data.GetProperty("messages")[0].GetProperty("reference");
+    var message = await client.CallToolAsync("get_message",
+        new Dictionary<string, object?>
+        {
+            ["folder"] = reference.GetProperty("folder").GetString(),
+            ["uidValidity"] = reference.GetProperty("uidValidity").GetUInt32(),
+            ["uid"] = reference.GetProperty("uid").GetUInt32()
+        });
+}
+```
 
 ## Startup diagnostics
 
@@ -78,4 +144,44 @@ All configuration diagnostics carry the `startup: ` prefix, including rows that 
 
 ## Live acceptance status
 
-No Bridge version or live mailbox behavior has been validated. The live acceptance suite and its explicit opt-in switch are not implemented, so no live test command is provided. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the planned operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
+No Bridge version or live mailbox behavior has been validated. The live acceptance suite requires an exact opt-in phrase, external settings, a dedicated folder and a known-fixture manifest; it has not been run against Bridge. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the implemented operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
+
+## VS Code MCP launch
+
+In VS Code, use **MCP: Add Server** and choose a stdio command. Prefer user-profile storage for real-mail configuration paths. The equivalent configuration below uses placeholders; follow [VS Code's MCP server guide](https://code.visualstudio.com/docs/agent-customization/mcp-servers) for the installed client version. This client example is documented, not interactively verified in this handoff.
+
+```json
+{
+  "servers": {
+    "protonmail": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "/absolute/path/to/checkout/src/ProtonMailMcp/bin/Release/net10.0/ProtonMailMcp.dll",
+        "--config",
+        "/absolute/private/directory/config.json"
+      ]
+    }
+  }
+}
+```
+
+Review the client's trust prompt and model/data policy before enabling tools. Use **MCP: List Servers** to start/stop/restart the process and inspect sanitized stderr. Discovery should show exactly the three tools. Restart after changing configuration, credentials, or pins. A client tool call can access real mail; do not test it with personal settings before authorization. Never use `dotnet run` as the MCP transport command or merge stderr into stdout.
+
+## Runtime troubleshooting
+
+| Symptom | Safe operator action |
+| --- | --- |
+| `bridge_unavailable` | Start/unlock Bridge locally, wait for sync, check the displayed IMAP loopback endpoint and port, then retry deliberately. Initialization can succeed while Bridge is down. No automatic retries occur. |
+| `authentication_failed` | Check Bridge's generated IMAP username/password locally. If changed, update only the external password/configuration and restart the host. Do not use the Proton account password or inspect keyrings/caches. |
+| `tls_failed` | Check required mode, local clock, public certificate validity and intended Bridge instance. Follow [certificate replacement](LINUX-SETUP.md#export-and-replace-the-certificate); do not accept a network-learned pin or disable verification. |
+| `denied_folder` or absent discovery entry | Check exact full-name allowlisting; missing/nonselectable entries are omitted. A parent does not authorize children. The server never creates or subscribes folders. |
+| `stale_reference` | Search again and use the new folder + UIDVALIDITY + UID. During acceptance stop and investigate a changed epoch before preparing a new external manifest. |
+| `message_not_found` | A message disappeared or the identity is wrong. Search again; never substitute sequence number or Message-ID. |
+| `timeout` / connection lost | Check Bridge availability and competing calls. Each operation has 30 seconds including queue time. A later call uses a fresh connection. Send an MCP cancellation notification to cancel remotely. |
+| Truncated search/body | Narrow search filters; maximum 50 results and 32,000 text characters. There is no pagination or limit bypass. |
+| `oversized`, `unsupported`, `missing`, `malformed` | Inspect status and metadata. Selected bodies over 1 MiB are not fetched; malformed or unavailable bodies stay metadata-only. Attachment content and alternate-body fallback to evade limits are unsupported. |
+| `protocol_failure` / read-only rejection | Stop live testing and reproduce with synthetic fixtures. Do not enable SELECT/read-write, remove PEEK, or weaken TLS to work around Bridge behavior. |
+| Live state comparison failed | Stop other clients/rules, inspect fixtures locally using read-only access, and investigate changes. Never reset the baseline silently or clean up flagged messages with this suite. |
+
+Report only fixed codes, versions, and pass/fail outcomes. Do not enable production wire logging, paste message results, or attach raw settings to diagnose failures.

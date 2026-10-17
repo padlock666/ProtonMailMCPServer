@@ -1,6 +1,6 @@
 # Configuration guide
 
-The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract; see the [usage guide](USAGE.md) for building and launching the current initialization-only host. Mailbox tools and live Bridge acceptance remain pending in [PLAN.md](../PLAN.md).
+The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract; see the [usage guide](USAGE.md) for building and launching the stdio host and the three implemented tool contracts. Application configuration is unchanged in Phase 4; live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
 
 ## File locations and loading
 
@@ -69,4 +69,6 @@ When Bridge's certificate changes, verify the change independently, export the r
 
 Configuration failures exit with code `2` and a fixed `startup: configuration_...` diagnostic on stderr. Diagnostics omit paths, settings, credentials, and underlying exception details. Common codes and next checks are listed in the [usage guide](USAGE.md#startup-diagnostics).
 
-See [SECURITY.md](../SECURITY.md) for the full trust boundary and [TESTING.md](TESTING.md) for synthetic verification and the planned opt-in live acceptance procedure.
+See [SECURITY.md](../SECURITY.md) for the full trust boundary and [TESTING.md](TESTING.md) for synthetic verification and the implemented opt-in live acceptance procedure.
+
+For the complete installation, public-certificate export/replacement, and operator preparation workflow, see [LINUX-SETUP.md](LINUX-SETUP.md). Live acceptance uses a separate external manifest and explicit opt-in; these are test-runner inputs, never additional application settings.

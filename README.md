@@ -2,11 +2,11 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** Phases 1 and 2 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three MCP tools remain unimplemented. No Bridge or live-mail validation has been performed. See [PLAN.md](PLAN.md) for evidence and remaining phases.
+**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three approved tools are registered and tested through the official SDK client. No Bridge or live-mail validation has been performed. See [PLAN.md](PLAN.md) for evidence and remaining phases.
 
 ## Configuration and usage
 
-Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder allowlists, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The current host supports initialization only; mailbox tools are still pending.
+Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder allowlists, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes the three approved read-only tools.
 
 ## MVP
 
@@ -23,6 +23,7 @@ There is no HTTP service, body search, attachment download, background synchroni
 
 | Document | Purpose |
 | --- | --- |
+| [Linux/Bridge setup](docs/LINUX-SETUP.md) | Installation, public-certificate export/replacement, and operator preparation |
 | [Configuration guide](docs/CONFIGURATION.md) | Settings, file permissions, credentials, allowlists, and TLS pins |
 | [Usage guide](docs/USAGE.md) | Build/verification, stdio launch, current capabilities, and troubleshooting |
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
@@ -48,4 +49,4 @@ The server receives decrypted mail from Bridge. Only configured folders are expo
 
 ## Next step
 
-Review Phase 2 evidence, then request Phase 3 using the [development guide](docs/DEVELOPMENT.md). Phase 3 adds the three approved MCP tools; live acceptance remains Phase 4.
+Follow [Linux/Bridge setup](docs/LINUX-SETUP.md) and the [opt-in acceptance procedure](docs/TESTING.md#opt-in-real-bridge-acceptance). Phase 4 tooling and documentation are implemented; live acceptance and MVP completion remain unverified.
