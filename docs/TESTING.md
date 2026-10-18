@@ -1,6 +1,6 @@
 # Test strategy
 
-Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
+Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. This is limited functional evidence; body retrieval, live date-boundary exclusion, state preservation, failure/recovery, and version-specific compatibility remain unverified. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
 
 Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge groups. Unit/protocol/process tests use synthetic messages and must run without a Proton account, personal credentials, or a running Bridge instance.
 

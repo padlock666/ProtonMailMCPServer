@@ -1,6 +1,6 @@
 # Development and handoff guide
 
-Phases 1–3 are implemented. The build commands, external configuration, and internal read-only adapter are operational with synthetic protocol evidence. The three MCP tools have synthetic process evidence; Phase 4 tooling and handoff documentation are implemented, with live verification pending.
+Phases 1–3 are implemented. The build commands, external configuration, and internal read-only adapter are operational with synthetic protocol evidence. The three MCP tools have synthetic process evidence; Phase 4 tooling and handoff documentation are implemented, with a successful operator-performed real Bridge folder-listing and date-range search smoke test recorded on 2026-10-18. Full live acceptance remains pending; see [PLAN.md](../PLAN.md).
 
 ## Working with Codex
 

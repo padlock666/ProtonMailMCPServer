@@ -1,6 +1,6 @@
 # Usage guide
 
-The server exposes exactly three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. No Bridge version or live mailbox behavior has been validated; see [PLAN.md](../PLAN.md).
+The server exposes exactly three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. A manual real Bridge smoke test succeeded on 2026-10-18 for initialization, discovery, folder listing, and date-range search; full live acceptance and version-specific compatibility remain pending. See [PLAN.md](../PLAN.md).
 
 ## Build and verify
 
@@ -144,7 +144,9 @@ All configuration diagnostics carry the `startup: ` prefix, including rows that 
 
 ## Live acceptance status
 
-No Bridge version or live mailbox behavior has been validated. The live acceptance suite requires an exact opt-in phrase, external settings, a dedicated folder and a known-fixture manifest; it has not been run against Bridge. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the implemented operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
+An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for MCP initialization, discovery of the three approved tools, folder listing, and bounded delivery-date-range search with truncation reporting. Bridge/Linux/runtime versions were not supplied for that run. Message-body retrieval, exact live date-boundary exclusion, before/after persistent flag and membership preservation, and failure/recovery behavior remain unverified. No mailbox output is retained in the documentation.
+
+The live acceptance suite requires an exact opt-in phrase, external settings, a dedicated folder and a known-fixture manifest; it has not been run against Bridge. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the implemented operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
 
 ## VS Code MCP launch
 
