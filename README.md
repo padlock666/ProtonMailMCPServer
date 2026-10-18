@@ -29,6 +29,7 @@ There is no HTTP service, body search, attachment download, background synchroni
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
+| [BACKLOG.md](BACKLOG.md) | Requested future features and proposals awaiting implementation scope |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and mandatory safety controls |
 | [Testing guide](docs/TESTING.md) | Automated checks and opt-in Bridge acceptance tests |
 | [Development guide](docs/DEVELOPMENT.md) | Intended setup, development workflow, and handoff prompts |
