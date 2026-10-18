@@ -91,6 +91,86 @@ public sealed class ConfigurationTests
         await AssertSafeFailure(fixture);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RejectsWritableSettingsAndCertificateFiles(bool settingsFile)
+    {
+        using var fixture = new SyntheticConfiguration();
+        var path = settingsFile ? fixture.ConfigPath : fixture.CertificatePath;
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupWrite);
+        await AssertSafeFailure(fixture);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite);
+        await AssertSafeFailure(fixture);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RejectsSymlinkedSettingsAndCertificateFiles(bool settingsFile)
+    {
+        using var fixture = new SyntheticConfiguration();
+        var path = settingsFile ? fixture.ConfigPath : fixture.CertificatePath;
+        var target = path + ".target";
+        File.Move(path, target);
+        File.CreateSymbolicLink(path, target);
+        await AssertSafeFailure(fixture);
+    }
+
+    [Fact]
+    public async Task RejectsWritableAncestorEvenWhenImmediateParentIsPrivate()
+    {
+        using var fixture = new SyntheticConfiguration();
+        var writable = Path.Combine(fixture.DirectoryPath, "writable");
+        Directory.CreateDirectory(writable);
+        File.SetUnixFileMode(writable, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
+        var privateDirectory = Path.Combine(writable, "private");
+        Directory.CreateDirectory(privateDirectory);
+        File.SetUnixFileMode(privateDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var config = Path.Combine(privateDirectory, "config.json");
+        File.Copy(fixture.ConfigPath, config);
+        File.SetUnixFileMode(config, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        await AssertSafeFailure(config, fixture);
+    }
+
+    [Fact]
+    public async Task RejectsSymlinkedAncestorDirectory()
+    {
+        using var fixture = new SyntheticConfiguration();
+        var alias = Path.Combine(fixture.DirectoryPath, "alias");
+        Directory.CreateSymbolicLink(alias, fixture.DirectoryPath);
+        try { await AssertSafeFailure(Path.Combine(alias, "config.json"), fixture); }
+        finally { Directory.Delete(alias); }
+    }
+
+    [Fact]
+    public async Task RejectsUntrustedCertificateDirectory()
+    {
+        using var fixture = new SyntheticConfiguration();
+        var directory = Path.Combine(fixture.DirectoryPath, "certificate");
+        Directory.CreateDirectory(directory);
+        File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute);
+        var path = Path.Combine(directory, "public.pem");
+        File.Move(fixture.CertificatePath, path);
+        fixture.Values["CertificateFile"] = path;
+        fixture.Save();
+        await AssertSafeFailure(fixture);
+    }
+
+    [Fact]
+    public async Task ReadsValidatedSettingsHandleAfterPathReplacement()
+    {
+        using var fixture = new SyntheticConfiguration();
+        await using var stream = LinuxProtectedFile.Open(fixture.ConfigPath, LinuxProtectedFile.FileKind.Configuration);
+        File.Move(fixture.ConfigPath, fixture.ConfigPath + ".old");
+        File.WriteAllText(fixture.ConfigPath, "SYNTHETIC-replacement");
+        using var reader = new StreamReader(stream);
+        Assert.Contains(SyntheticConfiguration.SentinelUsername, await reader.ReadToEndAsync());
+    }
+
     [Fact]
     public async Task RejectsSymlinkAndDirectoryPasswordPaths()
     {
@@ -122,7 +202,7 @@ public sealed class ConfigurationTests
     public async Task ReadsTheValidatedHandleAfterPathReplacement()
     {
         using var fixture = new SyntheticConfiguration();
-        await using var stream = LinuxSecretFile.Open(fixture.PasswordPath);
+        await using var stream = LinuxProtectedFile.Open(fixture.PasswordPath);
         File.Move(fixture.PasswordPath, fixture.PasswordPath + ".old");
         File.WriteAllText(fixture.PasswordPath, "SYNTHETIC-replacement");
         using var reader = new StreamReader(stream);
@@ -204,10 +284,12 @@ public sealed class ConfigurationTests
         await AssertSafeFailure(fixture);
     }
 
-    private static async Task AssertSafeFailure(SyntheticConfiguration fixture)
+    private static Task AssertSafeFailure(SyntheticConfiguration fixture) => AssertSafeFailure(fixture.ConfigPath, fixture);
+
+    private static async Task AssertSafeFailure(string path, SyntheticConfiguration fixture)
     {
         var error = await Assert.ThrowsAsync<ConfigurationException>(() =>
-            ConfigurationLoader.LoadAsync(fixture.ConfigPath, CancellationToken.None));
+            ConfigurationLoader.LoadAsync(path, CancellationToken.None));
         Assert.Matches("^configuration_[a-z_]+$", error.Message);
         Assert.Null(error.InnerException);
         Assert.DoesNotContain(fixture.DirectoryPath, error.ToString());

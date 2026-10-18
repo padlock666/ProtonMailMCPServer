@@ -11,9 +11,3 @@ Track requested features here. Inclusion is not authorization to implement them;
 - **Mailbox changes:** New arrivals must not shift later pages or duplicate earlier results. Messages removed between requests may disappear; pagination does not provide a frozen mailbox snapshot.
 - **Verification needed:** Synthetic adapter protocol and MCP tests for successive pages, final/empty pages, unchanged filters, arrivals/removals, stale UIDVALIDITY, denied folders, invalid cursors, cancellation, limits, and read-only cleanup. Live Bridge verification remains explicit opt-in.
 - **Decisions before implementation:** Exact cursor format and validation, request/response schema, and the relationship between `nextCursor` and the existing `truncated` field.
-
-## Attachment handling and text extraction
-
-- **Status:** Requested; not implemented. Details deferred.
-- **Goal:** Make text from supported message attachments, including text-based PDFs, available to the AI calling the MCP server.
-- **Scope to define later:** Supported formats, retrieval/extraction tools, size and output limits, and handling of unsupported or scanned files. This requires an explicit scope update beyond the current metadata-only attachment support; extracted content remains untrusted data.

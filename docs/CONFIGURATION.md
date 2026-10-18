@@ -10,7 +10,7 @@ Only this JSON file supplies application settings. `appsettings.json`, environme
 
 ## JSON settings
 
-Copy [config.example.json](../examples/config.example.json) to a private directory outside the checkout and edit that external copy. The template below contains placeholders; replace the username and file paths locally, and set the port and TLS mode to match Bridge's displayed IMAP settings. Do not add real credentials or settings to the example in the repository.
+Copy [config.example.json](../examples/config.example.json) to a private directory outside the checkout and edit that external copy. Set the directory to mode `0700` and the JSON file to `0600` or `0400`. The template below contains placeholders; replace the username and file paths locally, and set the port and TLS mode to match Bridge's displayed IMAP settings. Do not add real credentials or settings to the example in the repository.
 
 ```json
 {
@@ -42,24 +42,23 @@ Start with a narrow list such as `["INBOX"]`. The list accepts at most 256 entri
 
 Names match exactly, including case, except that `INBOX` is case-insensitive. Allowing a parent folder does not allow its descendants. Use full folder names as exposed by Bridge; missing and nonselectable folders are omitted from discovery, not created or repaired. Search and direct message retrieval both recheck the allowlist.
 
-## Password file
+## Protected local files
 
 Create and populate the password file locally using a trusted editor or another method that keeps the secret out of shell history and process arguments. Do not put passwords in JSON, launch arguments, environment examples, repository files, logs, or chat.
 
-The file must be:
+The JSON configuration, public certificate, and password file must each be:
 
 - A regular, readable file owned by the effective user running the server.
 - Private, with no group/other or special permission bits; `0600` or `0400` are typical modes.
 - Inside an immediate parent directory owned by that user and private, normally `0700`.
-- Nonempty, at most 4,096 bytes, and valid UTF-8. A conventional terminal LF or CRLF is accepted; surrounding password spaces are preserved. Blank passwords and embedded control characters are rejected.
 
-Final-component symlinks for the file and its immediate parent directory are rejected. Keep ancestor directories trusted. Validation checks the opened file and directory handles using Linux `statx`; unavailable ownership/permission metadata fails closed. The server does not create the secret or fix its permissions.
+The password must be nonempty, at most 4,096 bytes, and valid UTF-8. A conventional terminal LF or CRLF is accepted; surrounding password spaces are preserved. Blank passwords and embedded control characters are rejected. The JSON configuration and certificate are each capped at 65,536 bytes.
 
-The JSON configuration and certificate are capped at 65,536 bytes each. Keeping all three files in a private external directory is recommended; the strict ownership and mode checks above apply specifically to the password and its immediate parent.
+Symlinks are rejected at every path component. Ancestor directories must be owned by the user or root and not writable by group/others; a root-owned sticky directory such as `/tmp` is accepted. `.` and `..` path components are rejected. Validation walks directories through open handles and checks the opened files and directories using Linux `statx`; unavailable metadata fails closed. The server does not create or repair these files or their permissions.
 
 ## Public certificate and TLS pin
 
-Supply one public X.509 certificate as PEM or DER. It must be within its validity period. Private-key bundles, multiple PEM certificates, and PKCS#12 files are rejected. Export and verify the public certificate using the operator-managed Bridge installation; the server never needs Bridge's private key.
+Supply one public X.509 certificate as PEM or DER. It must be within its validity period. Private-key bundles, multiple PEM certificates, and PKCS#12 files are rejected. Export and verify the public certificate using the operator-managed Bridge installation; the server never needs Bridge's private key. Although its contents are public, its file permissions must protect the pin from replacement.
 
 Each mailbox connection requires encrypted IMAP and an exact match to the configured certificate before authentication. A self-signed certificate can be trusted through this explicit pin; a different certificate fails even if a system certificate authority trusts it. There is no plaintext fallback, trust-on-first-use, or automatic pin replacement.
 

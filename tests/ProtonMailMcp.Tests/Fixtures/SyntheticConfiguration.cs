@@ -30,15 +30,22 @@ internal sealed class SyntheticConfiguration : IDisposable
         Save();
     }
 
-    public void Save() => File.WriteAllText(ConfigPath, JsonSerializer.Serialize(Values));
+    public void Save()
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
+        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(Values));
+        File.SetUnixFileMode(ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
 
     public void WriteCertificate(DateTimeOffset start, DateTimeOffset end, bool der = false)
     {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
         using var key = ECDsa.Create();
         var request = new CertificateRequest("CN=synthetic.invalid", key, HashAlgorithmName.SHA256);
         using var cert = request.CreateSelfSigned(start, end);
         if (der) File.WriteAllBytes(CertificatePath, cert.RawData);
         else File.WriteAllText(CertificatePath, cert.ExportCertificatePem());
+        File.SetUnixFileMode(CertificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
     public void Dispose() => Directory.Delete(DirectoryPath, recursive: true);

@@ -16,7 +16,7 @@ The standard suite uses synthetic configuration, TLS certificates, and ephemeral
 
 ## Configure the host
 
-Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder allowlist. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for password-file checks.
+Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder allowlist. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on all three files.
 
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
@@ -138,11 +138,11 @@ if (search.IsError != true && search.StructuredContent is { } data &&
 | `2`, `configuration_absolute_path_required` | Check the configuration, password, and certificate paths |
 | `2`, `configuration_host_invalid`, `configuration_port_invalid`, or `configuration_tls_mode_invalid` | Check the literal loopback address, port range, and exact TLS mode value |
 | `2`, `configuration_username_invalid` or `configuration_allowlist_invalid` | Check the required username and nonempty exact folder list |
-| `2`, `configuration_password_file_unavailable`, `configuration_password_file_unsafe`, or `configuration_password_directory_unsafe` | Check existence, ownership, private modes, regular-file type, size, and final-component symlinks |
+| `2`, `configuration_password_*`, `configuration_settings_*`, or `configuration_certificate_*` file/directory errors | Check existence, ownership, private modes, regular-file type, and symlinks for all three local files |
 | `2`, `configuration_password_invalid` | Check UTF-8 password content and line endings without printing the secret |
 | `2`, `configuration_public_certificate_required` or `configuration_certificate_invalid` | Check that the file contains a single public certificate and that its validity dates include the current time |
 | `2`, `configuration_file_too_large` | Check the file limits in the configuration guide |
-| `2`, `configuration_linux_required` or `configuration_password_metadata_unavailable` | Use Linux with working opened-handle ownership/permission checks |
+| `2`, `configuration_linux_required`, `configuration_metadata_unavailable`, or `configuration_path_unsafe` | Use Linux with working opened-handle checks; remove unsafe ancestor permissions, symlinks, and `.`/`..` path components |
 | `2`, `configuration_invalid` or `configuration_invalid_or_unavailable` | Check JSON spelling/types, readability, certificate format, and password encoding locally |
 | `1`, `host: failed` | The host failed; review the build/runtime setup and reproduce with synthetic fixtures |
 

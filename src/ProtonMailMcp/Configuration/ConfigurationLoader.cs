@@ -20,7 +20,7 @@ internal static class ConfigurationLoader
         try
         {
             RequireAbsolutePath(path);
-            await using var config = File.OpenRead(path);
+            await using var config = LinuxProtectedFile.Open(path, LinuxProtectedFile.FileKind.Configuration);
             var bytes = await ReadBoundedAsync(config, 65536, cancellationToken);
             var document = JsonSerializer.Deserialize<ConfigurationDocument>(bytes, JsonOptions)
                 ?? throw new ConfigurationException("configuration_invalid");
@@ -45,7 +45,7 @@ internal static class ConfigurationLoader
             RequireAbsolutePath(document.CertificateFile);
             RequireAbsolutePath(document.PasswordFile);
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
-            await using var secret = LinuxSecretFile.Open(document.PasswordFile!);
+            await using var secret = LinuxProtectedFile.Open(document.PasswordFile!);
             var password = new UTF8Encoding(false, true).GetString(await ReadBoundedAsync(secret, 4096, cancellationToken));
             // Accept one conventional line ending, but never trim spaces from a credential.
             if (password.EndsWith('\n')) password = password[..^1];
@@ -72,7 +72,7 @@ internal static class ConfigurationLoader
 
     private static async Task<byte[]> LoadCertificateAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(path);
+        await using var stream = LinuxProtectedFile.Open(path, LinuxProtectedFile.FileKind.Certificate);
         var bytes = await ReadBoundedAsync(stream, 65536, cancellationToken);
         X509Certificate2 certificate;
         if (bytes.AsSpan().StartsWith("-----BEGIN"u8))

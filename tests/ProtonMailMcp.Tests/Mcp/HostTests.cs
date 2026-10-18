@@ -129,8 +129,11 @@ public sealed class HostTests
     [InlineData("missing-arguments")]
     [InlineData("missing-file")]
     [InlineData("invalid-config")]
+    [InlineData("writable-config")]
+    [InlineData("writable-certificate")]
     public async Task StartupFailureIsSanitizedAndStderrOnly(string scenario)
     {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
         using var fixture = new SyntheticConfiguration();
         var arguments = new[] { "--config", fixture.ConfigPath };
         if (scenario == "missing-arguments") arguments = [];
@@ -140,6 +143,10 @@ public sealed class HostTests
             fixture.Values["TlsMode"] = SyntheticConfiguration.SentinelPassword;
             fixture.Save();
         }
+        if (scenario == "writable-config")
+            File.SetUnixFileMode(fixture.ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
+        if (scenario == "writable-certificate")
+            File.SetUnixFileMode(fixture.CertificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var process = Start(arguments);
         try

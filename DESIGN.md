@@ -105,7 +105,7 @@ Configuration errors fail startup clearly and safely. Bridge availability is che
 
 ## Configuration and observability
 
-Load explicit configuration from outside the repository using a configuration-file path. Required settings are Bridge username, IMAP port, explicit TLS mode, exported public certificate path, password-file path, and a nonempty folder allowlist. Host defaults to literal `127.0.0.1`; reject non-loopback addresses. Keep deadline and content/result limits fixed for the MVP.
+Load explicit configuration from outside the repository using a configuration-file path. Require owner-private regular files and private parent directories for the JSON settings, exported public certificate, and password; reject symlinks and writable ancestors before reading through validated handles. Required settings are Bridge username, IMAP port, explicit TLS mode, exported public certificate path, password-file path, and a nonempty folder allowlist. Host defaults to literal `127.0.0.1`; reject non-loopback addresses. Keep deadline and content/result limits fixed for the MVP.
 
 The setup instructions will start the allowlist at `INBOX`; runtime must not silently replace a missing/empty allowlist. Folder names match configured full names, with the IMAP-defined case-insensitive handling of `INBOX`. No wildcards or automatic descendant access.
 

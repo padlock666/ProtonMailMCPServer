@@ -9,7 +9,7 @@ Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge
 Exercise observable behavior rather than duplicating method implementations:
 
 - Exact folder allowlist enforcement, including empty configuration, case rules for INBOX, and rejection of implicit descendants.
-- Configuration and secret-file validation: missing/invalid fields, non-loopback host, unsafe owner/permissions, symlink password path, invalid certificates, and redacted failures.
+- Configuration and protected-file validation: missing/invalid fields, non-loopback host, unsafe ownership/permissions for the JSON, certificate, and password, symlinked files or ancestors, writable ancestors, invalid certificates, and redacted failures.
 - Search AND semantics, recipient To/Cc matching, unread tri-state, sender-date bounds (`SENTSINCE`/`SENTBEFORE`), invalid ranges, default/max limits, descending UID results, and truncation.
 - Folder + UIDVALIDITY + UID identity, stale epoch rejection, and missing message behavior.
 - Main-body choice for plain, HTML-only, multipart alternative, related inline images, attached text, and nested attached messages.
@@ -133,7 +133,7 @@ For dependency changes, update the lock file intentionally before validating loc
 
 ## Phase 1 coverage and limitations
 
-Synthetic fixtures generate temporary public PEM/DER certificates and a fake password in a private directory. No checked-in credentials or certificates are needed. Tests cover required fields, strict loopback addresses, required TLS modes, allowlists, bounded files, certificate dates/formats, password modes/private parent directory, final-component symlinks, directories/FIFOs, opened-handle replacement, cancellation, and sanitized diagnostics. Owner UID is checked on the opened file and parent directory; a foreign-owner integration case is not exercised because it would require ownership-changing privileges.
+Synthetic fixtures generate temporary public PEM/DER certificates and a fake password in a private directory. No checked-in credentials or certificates are needed. Tests cover required fields, strict loopback addresses, required TLS modes, allowlists, bounded files, certificate dates/formats, private modes/parents for all three local files, symlinked files and ancestors, writable ancestors, directories/FIFOs, opened-handle replacement, cancellation, and sanitized diagnostics. Owner UID is checked on opened file and directory handles; a foreign-owner integration case is not exercised because it would require ownership-changing privileges.
 
 The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. Phase 2 adds `Protocol` tests; Phase 4 adds the separately gated `LiveBridge` test. The initialization-only process tests establish neither tool contracts nor real Bridge compatibility.
 

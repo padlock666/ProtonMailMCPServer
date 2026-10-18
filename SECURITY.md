@@ -18,7 +18,7 @@ Stdio limits exposure to the parent/child process relationship; it is not a sand
 | Read silently sets flags | Read-only folder open plus PEEK retrieval | Protocol and real Bridge tests |
 | Cleanup deletes flagged messages | No expunge or expunging folder close | Error/cancellation/disconnect transcripts and live flags |
 | Credentials sent to wrong service | Literal loopback restriction, required TLS, exact certificate pin | Endpoint/TLS tests before authentication |
-| Credentials/content disclosed | External owner-only secret file; sanitized stderr/errors | Permission tests and captured output tests |
+| Credentials/content disclosed or trust settings replaced | External owner-only password, configuration, and pin files with private parents and trusted ancestors; sanitized stderr/errors | Permission/path tests and captured output tests |
 | Email contains malicious instructions or HTML | Treat content as data; text conversion only; no network/render/execute | MIME and external-reference fixtures |
 | Oversized content exhausts resources | Transfer/body/result caps and 30-second deadline | Oversize and cancellation fixtures |
 | UID reused after folder reset | Compare UIDVALIDITY before every message read | Stale-reference tests |
@@ -46,7 +46,7 @@ Bridge's certificate is self-signed; its [TLS explanation](https://proton.me/sup
 
 ## Configuration, secrets, and data handling
 
-Use Bridge's generated IMAP credentials, not the Proton account password. Read the password from a separate regular file outside the repository, owned by the current user and inaccessible to group/others (for example mode `0600`). Reject unsafe permissions and symbolic-link password paths; validate the file actually opened rather than relying only on a prior path check. Keep the containing configuration directory private. Do not write or alter credential files on the user's behalf during normal startup.
+Use Bridge's generated IMAP credentials, not the Proton account password. Read the password from a separate regular file outside the repository. Require the password, JSON configuration, and public certificate to be owned by the current user with private modes (for example `0600`), inside private parent directories. Reject symlinks at every path component and unsafe writable ancestors; validate the open directory/file handles rather than relying on a prior path check. Do not write or alter these files on the user's behalf during normal startup.
 
 Only configuration paths belong in launch settings. Keep passwords out of command arguments, environment examples, tracked configuration, shell history, and logs. Do not inspect Bridge's internal keyring/cache files or the user's private key. Use placeholders in documentation and synthetic mail in fixtures.
 
