@@ -47,7 +47,7 @@ The tools call the tested adapter for allowlisted folder discovery, typed search
 
 | Behavior | Implemented tool boundary |
 | --- | --- |
-| Search | Sender, To/Cc recipient, subject, delivery dates, unread status; default 20 results, maximum 50, highest UIDs first |
+| Search | Sender, To/Cc recipient, subject, sender dates, unread status; default 20 results, maximum 50, highest UIDs first |
 | Message identity | Folder full name + UIDVALIDITY + UID; stale identities are rejected |
 | Body | Primary non-attachment plain text, otherwise HTML converted to text without rendering or fetching external references |
 | Transfer/output | Selected text part at most 1 MiB; returned text at most 32,000 characters, with explicit status/truncation |
@@ -62,12 +62,18 @@ Message content, links, and filenames remain untrusted data. A local client may 
 | Tool | Arguments | Successful structured result |
 | --- | --- | --- |
 | `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable allowed folders |
-| `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `receivedStart`, `receivedEnd`, `unread`, `limit` | `{"messages":[summary],"truncated":false}` |
+| `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `sentStart`, `sentEnd`, `unread`, `limit` | `{"messages":[summary],"truncated":false}` |
 | `get_message` | Required `folder`, `uidValidity`, `uid` | `{"summary":summary,"text":"...","contentStatus":"available","truncated":false,"attachments":[],"attachmentsTruncated":false}` |
 
 A summary has `reference` (`folder`, `uidValidity`, `uid`), `from`, `to`, `cc`, `subject`, `senderDate`, `internalDate`, `seen`, and `size`. Optional metadata is explicitly null when absent. Dates in results use ISO 8601 timestamps; size is reported bytes. Preserve all three reference fields from a search result when calling `get_message`; identifiers are integers from 1 through 4,294,967,295.
 
-Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Delivery dates are exact `YYYY-MM-DD`, inclusive start and exclusive end, with start strictly before end if both are supplied. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology. Narrow filters if `truncated` is true.
+Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Sender dates are exact `YYYY-MM-DD`, inclusive `sentStart` and exclusive `sentEnd`, with start strictly before end if both are supplied. Filtering uses the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, ignoring time and timezone (no UTC conversion). There is no internal-date fallback; missing, malformed or inaccurate sender dates can affect matching. This replaces the former delivery-date behavior as of 2026-10-18. The old `receivedStart`/`receivedEnd` arguments return `invalid_input`; update clients and restart the server to refresh tool discovery. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology. Narrow filters if `truncated` is true.
+
+For messages dated during a calendar month, call `search_messages` with:
+
+```json
+{"folder":"INBOX","sentStart":"2025-04-01","sentEnd":"2025-05-01","limit":20}
+```
 
 `contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, and reported `size`. Filenames are data and must never be treated as paths. No attachment payload is returned.
 
@@ -144,7 +150,7 @@ All configuration diagnostics carry the `startup: ` prefix, including rows that 
 
 ## Live acceptance status
 
-An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for MCP initialization, discovery of the three approved tools, folder listing, and bounded delivery-date-range search with truncation reporting. Bridge/Linux/runtime versions were not supplied for that run. Message-body retrieval, exact live date-boundary exclusion, before/after persistent flag and membership preservation, and failure/recovery behavior remain unverified. No mailbox output is retained in the documentation.
+An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for MCP initialization, discovery of the three approved tools, folder listing, and bounded delivery-date-range search with truncation reporting. Bridge/Linux/runtime versions were not supplied for that run. Message-body retrieval, exact live date-boundary exclusion, before/after persistent flag and membership preservation, and failure/recovery behavior remain unverified. No mailbox output is retained in the documentation. Subsequent operator investigation found imported messages with old sender dates and newer internal dates. The original smoke test confirmed search execution, not the intended sender-date behavior. The replacement sender-date filters have not yet been tested against real Bridge.
 
 The live acceptance suite requires an exact opt-in phrase, external settings, a dedicated folder and a known-fixture manifest; it has not been run against Bridge. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the implemented operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
 

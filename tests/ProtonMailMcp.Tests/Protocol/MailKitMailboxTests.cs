@@ -181,13 +181,13 @@ public sealed class MailKitMailboxTests
     [InlineData(20, 51, true)]
     [InlineData(50, 51, true)]
     [InlineData(50, 21, false)]
-    public async Task SearchUsesTypedDeliveryFiltersUidOrderingAndBoundedSummaries(int limit, int matchesCount, bool truncated)
+    public async Task SearchUsesTypedSenderDateFiltersUidOrderingAndBoundedSummaries(int limit, int matchesCount, bool truncated)
     {
         var chosen = Enumerable.Range(1, matchesCount).Select(value => value * 2).OrderDescending().Take(limit).Order().ToArray();
         var ids = string.Join(',', chosen.Reverse());
         var response = string.Concat(chosen.Select((uid, index) => $"* {index + 1} FETCH (UID {uid} FLAGS () RFC822.SIZE 100 ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL))\r\n"));
         await using var server = new ScriptedImapServer(new Session(Login(Examine(),
-            new("UID SEARCH FROM sender OR TO recipient CC recipient SUBJECT subject SINCE 1-Oct-2026 BEFORE 18-Oct-2026 UNSEEN",
+            new("UID SEARCH FROM sender OR TO recipient CC recipient SUBJECT subject SENTSINCE 1-Oct-2026 SENTBEFORE 18-Oct-2026 UNSEEN",
                 "* SEARCH " + string.Join(' ', Enumerable.Range(1, matchesCount).Select(value => value * 2)) + "\r\n{tag} OK search\r\n"),
             new(@"UID FETCH " + ids + @" \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", response + "{tag} OK fetched\r\n"), Logout())));
         using var mailbox = new MailKitMailbox(server.Settings());
@@ -197,6 +197,27 @@ public sealed class MailKitMailboxTests
         Assert.Equal(truncated, result.Truncated);
         Assert.Equal(chosen.Reverse().Select(value => (uint)value), result.Messages.Select(item => item.Reference.Uid));
         Assert.All(result.Messages, item => { Assert.Null(item.InternalDate); Assert.Null(item.Subject); });
+        await server.VerifyAsync();
+    }
+
+    [Theory]
+    [InlineData(true, false, "SENTSINCE 1-Apr-2025")]
+    [InlineData(false, true, "SENTBEFORE 2-Apr-2025")]
+    [InlineData(true, true, "SENTSINCE 1-Apr-2025 SENTBEFORE 2-Apr-2025")]
+    public async Task SenderDateBoundsUseSentKeysDespiteDifferentInternalDate(bool start, bool end, string query)
+    {
+        // Synthetic imported message: header date and mailbox internal date differ.
+        const string response = "* 1 FETCH (UID 42 FLAGS () INTERNALDATE \"20-Aug-2026 12:00:00 +0000\" RFC822.SIZE 100 ENVELOPE (\"Tue, 1 Apr 2025 23:30:00 -0700\" NIL NIL NIL NIL NIL NIL NIL NIL NIL))\r\n{tag} OK fetched\r\n";
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(),
+            new("UID SEARCH " + query, "* SEARCH 42\r\n{tag} OK search\r\n"),
+            new(@"UID FETCH 42 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", response), Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings());
+        var result = await mailbox.SearchAsync(new("INBOX",
+            SentStart: start ? new DateOnly(2025, 4, 1) : null,
+            SentEnd: end ? new DateOnly(2025, 4, 2) : null), CancellationToken.None);
+        var message = Assert.Single(result.Messages);
+        Assert.Equal(new DateTimeOffset(2025, 4, 1, 23, 30, 0, TimeSpan.FromHours(-7)), message.SenderDate);
+        Assert.Equal(new DateTimeOffset(2026, 8, 20, 12, 0, 0, TimeSpan.Zero), message.InternalDate);
         await server.VerifyAsync();
     }
 

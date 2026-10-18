@@ -1,6 +1,6 @@
 # Linux and Bridge handoff
 
-Phase 4 tooling is implemented. An operator-performed real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; versions were not supplied for that run, and no Linux/Bridge combination has full live acceptance evidence yet. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) before claiming compatibility. The synthetic suite needs no Bridge installation.
+Phase 4 tooling is implemented. An operator-performed real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; versions were not supplied for that run, and no Linux/Bridge combination has full live acceptance evidence yet. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) before claiming compatibility. The synthetic suite needs no Bridge installation. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](USAGE.md) for the updated inputs.
 
 ## Prepare Bridge and external files
 

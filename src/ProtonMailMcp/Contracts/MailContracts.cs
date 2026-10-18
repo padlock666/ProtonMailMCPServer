@@ -1,7 +1,7 @@
 namespace ProtonMailMcp.Contracts;
 
 internal sealed record SearchRequest(string Folder, string? Sender = null, string? Recipient = null,
-    string? Subject = null, DateOnly? ReceivedStart = null, DateOnly? ReceivedEnd = null,
+    string? Subject = null, DateOnly? SentStart = null, DateOnly? SentEnd = null,
     bool? Unread = null, int Limit = 20);
 internal sealed record MessageReference(string Folder, uint UidValidity, uint Uid);
 internal sealed record FolderResult(string Name);

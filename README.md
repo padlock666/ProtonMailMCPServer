@@ -2,7 +2,7 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three approved tools are registered and tested through the official SDK client. An operator-performed real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. Full live acceptance remains pending. See [PLAN.md](PLAN.md) for evidence and remaining phases.
+**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three approved tools are registered and tested through the official SDK client. An operator-performed real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. Full live acceptance remains pending. See [PLAN.md](PLAN.md) for evidence and remaining phases. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
 
 ## Configuration and usage
 

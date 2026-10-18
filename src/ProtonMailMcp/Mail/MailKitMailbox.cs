@@ -105,7 +105,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox
     internal static SearchQuery BuildQuery(SearchRequest request)
     {
         if (request.Limit is < 1 or > 50 ||
-            request.ReceivedStart.HasValue && request.ReceivedEnd.HasValue && request.ReceivedStart >= request.ReceivedEnd)
+            request.SentStart.HasValue && request.SentEnd.HasValue && request.SentStart >= request.SentEnd)
             throw new MailboxException(MailboxError.InvalidInput);
         var query = SearchQuery.All;
         foreach (var value in new[] { request.Sender, request.Recipient, request.Subject })
@@ -114,8 +114,9 @@ internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox
         if (request.Sender is not null) query = query.And(SearchQuery.FromContains(request.Sender));
         if (request.Recipient is not null) query = query.And(SearchQuery.ToContains(request.Recipient).Or(SearchQuery.CcContains(request.Recipient)));
         if (request.Subject is not null) query = query.And(SearchQuery.SubjectContains(request.Subject));
-        if (request.ReceivedStart is { } start) query = query.And(SearchQuery.DeliveredAfter(start.ToDateTime(TimeOnly.MinValue)));
-        if (request.ReceivedEnd is { } end) query = query.And(SearchQuery.DeliveredBefore(end.ToDateTime(TimeOnly.MinValue)));
+        // Search the sender Date header via IMAP sent-date keys; never fall back to INTERNALDATE.
+        if (request.SentStart is { } start) query = query.And(SearchQuery.SentSince(start.ToDateTime(TimeOnly.MinValue)));
+        if (request.SentEnd is { } end) query = query.And(SearchQuery.SentBefore(end.ToDateTime(TimeOnly.MinValue)));
         if (request.Unread is { } unread) query = query.And(unread ? SearchQuery.NotSeen : SearchQuery.Seen);
         return query;
     }

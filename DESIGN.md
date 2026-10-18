@@ -8,7 +8,7 @@ Allow a trusted local MCP client to discover permitted folders, search message s
 
 The MVP serves one user and one Bridge account on Linux. The client starts the application as a stdio child process. Bridge remains a separately installed and operated dependency. The server must not manage Bridge login, Proton encryption keys, or Bridge's internal cache.
 
-Expose only explicitly configured folders, initially `INBOX`. Support headers, delivery-date filters, unread filters, text bodies, and attachment metadata. Exclude HTTP, SMTP, body search, attachment payloads, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
+Expose only explicitly configured folders, initially `INBOX`. Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Exclude HTTP, SMTP, body search, attachment payloads, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
 
 ## Architecture
 
@@ -50,11 +50,11 @@ No arguments. Return existing, selectable folders from the allowlist, using Brid
 
 ### `search_messages`
 
-Required input: folder full name. Optional inputs: sender substring, recipient substring, subject substring, received-date start, received-date end, unread status, and limit.
+Required input: folder full name. Optional inputs: sender substring, recipient substring, subject substring, sent-date start, sent-date end, unread status, and limit.
 
 - Combine supplied filters with AND. Use MailKit's typed search builders, never raw caller-supplied IMAP syntax.
 - Recipient filtering covers To and Cc. Bcc is not a reliable search target for received mail.
-- Dates use IMAP delivery date at calendar-day precision: inclusive start, exclusive end. Do not use the sender's `Date` header to implement received-date filtering. Reject malformed or reversed ranges.
+- As requested by the project owner on 2026-10-18, dates use the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, at calendar-day precision: inclusive `sentStart`, exclusive `sentEnd`, ignoring time and timezone rather than converting to UTC. Reject malformed or reversed ranges. This replaces the original delivery-date filters; `receivedStart`/`receivedEnd` are no longer accepted. No fallback to IMAP internal date occurs. Missing, malformed or inaccurate sender dates can affect matching; Bridge's live handling remains to be verified.
 - Unread omitted means either status; true means unseen; false means seen. Reading this flag must not change it.
 - Default limit is 20; valid limits are 1 through 50. Reject invalid values rather than silently broadening a query.
 - Return highest UIDs first within the selected folder. This ordering is not a guarantee of chronology by sender date.

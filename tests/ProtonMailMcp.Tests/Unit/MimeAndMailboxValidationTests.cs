@@ -22,7 +22,7 @@ public sealed class MimeAndMailboxValidationTests
     {
         var day = new DateOnly(2026, 10, 17);
         foreach (var end in new[] { day, day.AddDays(-1) })
-            Assert.Throws<MailboxException>(() => MailKitMailbox.BuildQuery(new("INBOX", ReceivedStart: day, ReceivedEnd: end)));
+            Assert.Throws<MailboxException>(() => MailKitMailbox.BuildQuery(new("INBOX", SentStart: day, SentEnd: end)));
         foreach (var value in new[] { "", " ", "x\r\nUID STORE", new string('x', 1025) })
         {
             Assert.Throws<MailboxException>(() => MailKitMailbox.BuildQuery(new("INBOX", Sender: value)));

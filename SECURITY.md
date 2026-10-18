@@ -1,6 +1,6 @@
 # Security boundaries
 
-This is a security design and implementation checklist. Phases 1–3 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol and official SDK process evidence. A manual real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; live persistent flag/membership preservation and failure-path safety remain unverified. Implementation evidence is in [PLAN.md](PLAN.md).
+This is a security design and implementation checklist. Phases 1–3 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol and official SDK process evidence. A manual real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; live persistent flag/membership preservation and failure-path safety remain unverified. Implementation evidence is in [PLAN.md](PLAN.md). That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
 
 ## Assets and trust model
 

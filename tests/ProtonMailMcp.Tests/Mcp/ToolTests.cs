@@ -51,7 +51,7 @@ public sealed class ToolTests
         }
         var search = tools.Single(t => t.Name == "search_messages").ProtocolTool;
         Assert.Equal(new[] { "folder" }, search.InputSchema.GetProperty("required").EnumerateArray().Select(x => x.GetString()));
-        Assert.Equal(new[] { "folder", "limit", "receivedEnd", "receivedStart", "recipient", "sender", "subject", "unread" },
+        Assert.Equal(new[] { "folder", "limit", "recipient", "sender", "sentEnd", "sentStart", "subject", "unread" },
             search.InputSchema.GetProperty("properties").EnumerateObject().Select(x => x.Name).Order());
         Assert.Equal(20, search.InputSchema.GetProperty("properties").GetProperty("limit").GetProperty("default").GetInt32());
         var get = tools.Single(t => t.Name == "get_message").ProtocolTool;
@@ -70,7 +70,7 @@ public sealed class ToolTests
         await using var server = new ScriptedImapServer(
             new Session(Login(Logout())),
             new Session(Login(Examine(),
-                new("UID SEARCH FROM sender OR TO recipient CC recipient SUBJECT subject SINCE 1-Oct-2026 BEFORE 18-Oct-2026 UNSEEN", "* SEARCH 41 42\r\n{tag} OK search\r\n"),
+                new("UID SEARCH FROM sender OR TO recipient CC recipient SUBJECT subject SENTSINCE 1-Oct-2026 SENTBEFORE 18-Oct-2026 UNSEEN", "* SEARCH 41 42\r\n{tag} OK search\r\n"),
                 new(@"UID FETCH 42 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", "* 1 FETCH (UID 42 FLAGS () RFC822.SIZE 100 ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL))\r\n{tag} OK fetched\r\n"), Logout())),
             new Session(Login(Examine(), Summary("(" + Plain + attachment + "\"MIXED\")"), Body("hello", "1"), Logout())));
         await using var host = await ClientHost.StartAsync(server);
@@ -79,7 +79,7 @@ public sealed class ToolTests
         var search = Data(await host.Client.CallToolAsync("search_messages", new Dictionary<string, object?>
         {
             ["folder"] = "INBOX", ["sender"] = "sender", ["recipient"] = "recipient", ["subject"] = "subject",
-            ["receivedStart"] = "2026-10-01", ["receivedEnd"] = "2026-10-18", ["unread"] = true, ["limit"] = 1
+            ["sentStart"] = "2026-10-01", ["sentEnd"] = "2026-10-18", ["unread"] = true, ["limit"] = 1
         }));
         Assert.True(search.GetProperty("truncated").GetBoolean());
         var summary = Assert.Single(search.GetProperty("messages").EnumerateArray());
@@ -118,6 +118,9 @@ public sealed class ToolTests
 
     [Theory]
     [InlineData("list_folders", "{\"extra\":\"SYNTHETIC-input-sentinel\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedStart\":\"2025-04-01\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedEnd\":\"2025-04-02\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"sentStart\":\"2025-04-01\",\"sentEnd\":\"2025-04-01\"}", "invalid_input")]
     [InlineData("search_messages", "{}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":null}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":\"private\"}", "denied_folder")]
@@ -126,8 +129,8 @@ public sealed class ToolTests
     [InlineData("search_messages", "{\"folder\":\"INBOX\",\"limit\":\"20\"}", "invalid_input")]
     [InlineData("search_messages", "{\"Folder\":\"INBOX\"}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":\"INBOX\",\"unread\":\"false\"}", "invalid_input")]
-    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedStart\":\"bad\"}", "invalid_input")]
-    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedStart\":\"2026-10-18\",\"receivedEnd\":\"2026-10-17\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"sentStart\":\"bad\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"sentStart\":\"2026-10-18\",\"sentEnd\":\"2026-10-17\"}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":\"INBOX\",\"subject\":\" \"}", "invalid_input")]
     [InlineData("get_message", "{\"folder\":\"INBOX/child\",\"uidValidity\":7,\"uid\":42}", "denied_folder")]
     [InlineData("get_message", "{\"folder\":\"INBOX\",\"uid\":42}", "invalid_input")]

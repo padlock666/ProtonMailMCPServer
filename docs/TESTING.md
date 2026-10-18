@@ -1,6 +1,6 @@
 # Test strategy
 
-Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. This is limited functional evidence; body retrieval, live date-boundary exclusion, state preservation, failure/recovery, and version-specific compatibility remain unverified. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
+Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. That run exercised the former internal-date filter. The replacement sender-date search has synthetic coverage only; live sender-date matching, body retrieval, state preservation, failure/recovery, and version-specific compatibility remain unverified. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
 
 Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge groups. Unit/protocol/process tests use synthetic messages and must run without a Proton account, personal credentials, or a running Bridge instance.
 
@@ -10,7 +10,7 @@ Exercise observable behavior rather than duplicating method implementations:
 
 - Exact folder allowlist enforcement, including empty configuration, case rules for INBOX, and rejection of implicit descendants.
 - Configuration and secret-file validation: missing/invalid fields, non-loopback host, unsafe owner/permissions, symlink password path, invalid certificates, and redacted failures.
-- Search AND semantics, recipient To/Cc matching, unread tri-state, received-date boundaries, invalid ranges, default/max limits, descending UID results, and truncation.
+- Search AND semantics, recipient To/Cc matching, unread tri-state, sender-date bounds (`SENTSINCE`/`SENTBEFORE`), invalid ranges, default/max limits, descending UID results, and truncation.
 - Folder + UIDVALIDITY + UID identity, stale epoch rejection, and missing message behavior.
 - Main-body choice for plain, HTML-only, multipart alternative, related inline images, attached text, and nested attached messages.
 - HTML text conversion without rendering, remote requests, script execution, or attachment traversal.
@@ -60,7 +60,7 @@ Procedure:
 
 1. Stop other clients/background rules from changing the test folder and wait for Bridge synchronization to settle.
 2. Using read-only access, capture UIDVALIDITY, message UID membership/count, and persistent flags for the dedicated folder. Do not compare session-only `Recent` state as a persistent flag.
-3. Repeat folder listing, filtered/unfiltered searches, and reads of the known unread/read messages. Exercise text/HTML conversion and confirm attachment metadata without payload retrieval.
+3. Repeat folder listing, filtered/unfiltered searches, and reads of the known unread/read messages. Check sender-date ranges against independently known fixture Date headers, including inclusive start, exclusive end, one-sided ranges, and dates differing from internal dates where available. Exercise text/HTML conversion and confirm attachment metadata without payload retrieval.
 4. Capture the same state again. Require identical UIDVALIDITY, membership/count, and persistent flags; specifically require unread messages to remain unread and deleted-flagged messages to remain present.
 5. Exercise Bridge stop/restart, wrong credentials, and a wrong pin using isolated test settings. Never automatically replace the configured trusted pin. Resume correct settings and verify a new call works.
 6. Compare state again after recovery. An external change invalidates the comparison; report/repeat under controlled conditions rather than blaming or hiding it.
@@ -143,7 +143,7 @@ Linux is required for the suite, including `mkfifo` for a synthetic special-file
 
 `Fixtures/ScriptedImapServer.cs` listens only on an ephemeral loopback port and generates an isolated synthetic TLS certificate. Ordered session scripts admit exact expected commands, then require socket closure; extra commands or connections fail. Tests execute the actual `MailKitMailbox`, not a mock of `IReadOnlyMailbox`. MailKit's initial namespace/INBOX metadata discovery is included in each authenticated script; only allowlisted selectable folders are returned and only approved folders may be opened.
 
-Protocol evidence covers both required TLS modes, peer pin mismatch/expiry/future validity, absent STARTTLS, authentication rejection, EXAMINE with read-only confirmation, rejection of READ-WRITE or failed EXAMINE, UID-only retrieval, body-structure-first selection, top-level `BODY.PEEK[TEXT]`, nested PEEK sections, attachment-only/unsupported/missing bodies, attachment metadata caps, exact 1 MiB transfers, oversized advertised and actual literals, and output truncation. Search fixtures verify default 20/maximum 50 summaries, descending UIDs, AND filters, To/Cc OR semantics, delivery-date boundaries, unread tri-state, absent metadata, and empty results.
+Protocol evidence covers both required TLS modes, peer pin mismatch/expiry/future validity, absent STARTTLS, authentication rejection, EXAMINE with read-only confirmation, rejection of READ-WRITE or failed EXAMINE, UID-only retrieval, body-structure-first selection, top-level `BODY.PEEK[TEXT]`, nested PEEK sections, attachment-only/unsupported/missing bodies, attachment metadata caps, exact 1 MiB transfers, oversized advertised and actual literals, and output truncation. Search fixtures verify default 20/maximum 50 summaries, descending UIDs, AND filters, To/Cc OR semantics, sender-date bounds, one-sided ranges, and differing synthetic sender/internal dates, unread tri-state, absent metadata, and empty results.
 
 Failure scripts require disposal without CLOSE or any unrequested command, then verify a fresh successful connection. They cover stale/missing/vanished UIDs, malformed protocol replies, rejected fetches, broken sockets, cancellation during a partial literal, cancellation while queued, search timeout, and stalled logout. A controlled deadline clock verifies the production 30-second timer is armed before gate acquisition and that a queued timeout does not release another operation's gate. Pending-connection checks verify queued callers cannot start a concurrent session.
 
