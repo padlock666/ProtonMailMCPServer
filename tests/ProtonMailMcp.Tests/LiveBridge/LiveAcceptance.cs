@@ -37,7 +37,7 @@ internal sealed class LiveManifest
 
     internal void Validate(BridgeSettings settings)
     {
-        Require(settings.AllowedFolders.Count == 1 && settings.IsFolderAllowed(Folder) &&
+        Require(settings.FolderAccessMode == FolderAccessMode.Allowlist && settings.AllowedFolders.Count == 1 && settings.IsFolderAllowed(Folder) &&
             !string.Equals(Folder, "INBOX", StringComparison.OrdinalIgnoreCase), "dedicated_folder_required");
         Require(UidValidity != 0 && Messages.Length is >= 2 and <= 50 &&
             Messages.All(m => m.Uid != 0 && m.Keywords is not null &&
@@ -159,7 +159,7 @@ public sealed class LiveAcceptance
     }
 
     private static BridgeSettings Copy(BridgeSettings s, string password, byte[] pin) =>
-        new(s.Host, s.Port, s.TlsMode, s.Username, password, pin, s.AllowedFolders);
+        new(s.Host, s.Port, s.TlsMode, s.Username, password, pin, s.AllowedFolders, s.FolderAccessMode, s.ExcludedFolders);
 
     internal static string RequireExternalPath(string? path, string repository)
     {

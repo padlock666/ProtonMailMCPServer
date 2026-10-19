@@ -16,7 +16,7 @@ The standard suite uses synthetic configuration, TLS certificates, and ephemeral
 
 ## Configure the host
 
-Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder allowlist. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on all three files.
+Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder access policy. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on all three files.
 
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
@@ -43,7 +43,7 @@ Successful initialization identifies the server as `ProtonMailMcp`. It advertise
 
 ## Mailbox functionality and limits
 
-The tools call the tested adapter for allowlisted folder discovery, typed searches, and UID-based text retrieval. The following contracts use case-sensitive camelCase JSON names. Unknown arguments and incorrect JSON types return `invalid_input`. Optional substring/date/unread filters accept omission or null; `limit` must be an integer when supplied.
+The tools call the tested adapter for permitted folder discovery, typed searches, and UID-based text retrieval. The following contracts use case-sensitive camelCase JSON names. Unknown arguments and incorrect JSON types return `invalid_input`. Optional substring/date/unread filters accept omission or null; `limit` must be an integer when supplied.
 
 | Behavior | Implemented tool boundary |
 | --- | --- |
@@ -57,11 +57,13 @@ The tools call the tested adapter for allowlisted folder discovery, typed search
 
 Message content, links, and filenames remain untrusted data. A local client may forward tool results to a hosted model provider; stdio transport does not guarantee local model processing. Read [SECURITY.md](../SECURITY.md) before enabling real-mail access.
 
+Folder discovery returns at most 4,096 permitted folders and fails without a partial list if this count is exceeded. It follows the configured `Allowlist` or `AllExcept` policy; see [configuration](CONFIGURATION.md#folder-access-policy). AllExcept automatically exposes new folders and labels. Exclusions block folder access only: a message may still be returned through another permitted label/folder, including INBOX or All Mail. Tool inputs and outputs are unchanged.
+
 ## Tool inputs and results
 
 | Tool | Arguments | Successful structured result |
 | --- | --- | --- |
-| `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable allowed folders |
+| `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable permitted folders |
 | `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `sentStart`, `sentEnd`, `unread`, `limit` | `{"messages":[summary],"truncated":false}` |
 | `get_message` | Required `folder`, `uidValidity`, `uid` | `{"summary":summary,"text":"...","contentStatus":"available","truncated":false,"attachments":[],"attachmentsTruncated":false}` |
 
@@ -82,7 +84,7 @@ Successes populate MCP `structuredContent` and a text content block containing t
 | Error code | Meaning |
 | --- | --- |
 | `invalid_input` | Missing, unknown, malformed, or out-of-range arguments |
-| `denied_folder` | Folder is outside the exact allowlist |
+| `denied_folder` | Folder is outside the allowlist or is explicitly excluded in AllExcept mode |
 | `folder_unavailable` | Allowed folder is missing or not selectable |
 | `bridge_unavailable` | Connection refused/lost or malformed protocol response |
 | `authentication_failed` | Bridge rejected authentication |
@@ -90,7 +92,7 @@ Successes populate MCP `structuredContent` and a text content block containing t
 | `stale_reference` | UIDVALIDITY changed; search again rather than reuse the UID |
 | `message_not_found` | UID is missing or disappeared during retrieval |
 | `timeout` | The 30-second operation deadline expired, including queue time |
-| `protocol_failure` | Rejected command, unconfirmed read-only access, or unexpected internal failure |
+| `protocol_failure` | Rejected command, unconfirmed read-only access, folder listing over 4,096 permitted folders, or unexpected internal failure |
 
 Each completed/cancelled tool call emits a stderr diagnostic containing only operation name, random correlation ID, elapsed milliseconds, and fixed outcome. SDK/framework payload logging remains disabled. No folder, identifier, filters, mail, credentials, or exception text is logged.
 
@@ -137,7 +139,8 @@ if (search.IsError != true && search.StructuredContent is { } data &&
 | `2`, `startup: configuration_usage_requires_config_path` | Supply exactly `--config` and one absolute configuration path |
 | `2`, `configuration_absolute_path_required` | Check the configuration, password, and certificate paths |
 | `2`, `configuration_host_invalid`, `configuration_port_invalid`, or `configuration_tls_mode_invalid` | Check the literal loopback address, port range, and exact TLS mode value |
-| `2`, `configuration_username_invalid` or `configuration_allowlist_invalid` | Check the required username and nonempty exact folder list |
+| `2`, `configuration_username_invalid` or `configuration_allowlist_invalid` | Check the required username and legacy nonempty exact folder list |
+| `2`, `configuration_folder_access_invalid` | Check the explicit mode, required corresponding list, and absence of conflicting fields or legacy settings; see [folder policies](CONFIGURATION.md#folder-access-policy) |
 | `2`, `configuration_password_*`, `configuration_settings_*`, or `configuration_certificate_*` file/directory errors | Check existence, ownership, private modes, regular-file type, and symlinks for all three local files |
 | `2`, `configuration_password_invalid` | Check UTF-8 password content and line endings without printing the secret |
 | `2`, `configuration_public_certificate_required` or `configuration_certificate_invalid` | Check that the file contains a single public certificate and that its validity dates include the current time |
@@ -183,13 +186,13 @@ Review the client's trust prompt and model/data policy before enabling tools. Us
 | `bridge_unavailable` | Start/unlock Bridge locally, wait for sync, check the displayed IMAP loopback endpoint and port, then retry deliberately. Initialization can succeed while Bridge is down. No automatic retries occur. |
 | `authentication_failed` | Check Bridge's generated IMAP username/password locally. If changed, update only the external password/configuration and restart the host. Do not use the Proton account password or inspect keyrings/caches. |
 | `tls_failed` | Check required mode, local clock, public certificate validity and intended Bridge instance. Follow [certificate replacement](LINUX-SETUP.md#export-and-replace-the-certificate); do not accept a network-learned pin or disable verification. |
-| `denied_folder` or absent discovery entry | Check exact full-name allowlisting; missing/nonselectable entries are omitted. A parent does not authorize children. The server never creates or subscribes folders. |
+| `denied_folder` or absent discovery entry | Check the configured mode and exact full-name allowlist/exclusions; missing/nonselectable entries are omitted. Parent rules do not apply to children. The server never creates or subscribes folders. |
 | `stale_reference` | Search again and use the new folder + UIDVALIDITY + UID. During acceptance stop and investigate a changed epoch before preparing a new external manifest. |
 | `message_not_found` | A message disappeared or the identity is wrong. Search again; never substitute sequence number or Message-ID. |
 | `timeout` / connection lost | Check Bridge availability and competing calls. Each operation has 30 seconds including queue time. A later call uses a fresh connection. Send an MCP cancellation notification to cancel remotely. |
 | Truncated search/body | Narrow search filters; maximum 50 results and 32,000 text characters. There is no pagination or limit bypass. |
 | `oversized`, `unsupported`, `missing`, `malformed` | Inspect status and metadata. Selected bodies over 1 MiB are not fetched; malformed or unavailable bodies stay metadata-only. Attachment content and alternate-body fallback to evade limits are unsupported. |
-| `protocol_failure` / read-only rejection | Stop live testing and reproduce with synthetic fixtures. Do not enable SELECT/read-write, remove PEEK, or weaken TLS to work around Bridge behavior. |
+| `protocol_failure` / read-only rejection | If broad discovery exceeds 4,096 permitted folders, narrow the folder policy; no partial list is returned. For protocol/read-only failures, stop live testing and reproduce with synthetic fixtures. Do not enable SELECT/read-write, remove PEEK, or weaken TLS to work around Bridge behavior. |
 | Live state comparison failed | Stop other clients/rules, inspect fixtures locally using read-only access, and investigate changes. Never reset the baseline silently or clean up flagged messages with this suite. |
 
 Report only fixed codes, versions, and pass/fail outcomes. Do not enable production wire logging, paste message results, or attach raw settings to diagnose failures.

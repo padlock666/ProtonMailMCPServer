@@ -3,6 +3,14 @@ using System.Net;
 namespace ProtonMailMcp.Configuration;
 
 internal enum BridgeTlsMode { StartTls, SslOnConnect }
+internal enum FolderAccessMode { Allowlist, AllExcept }
+
+internal sealed class FolderAccessDocument
+{
+    public string? Mode { get; init; }
+    public string[]? AllowedFolders { get; init; }
+    public string[]? ExcludedFolders { get; init; }
+}
 
 internal sealed class ConfigurationDocument
 {
@@ -13,12 +21,14 @@ internal sealed class ConfigurationDocument
     public string? PasswordFile { get; init; }
     public string? CertificateFile { get; init; }
     public string[]? AllowedFolders { get; init; }
+    public FolderAccessDocument? FolderAccess { get; init; }
 }
 
 // Deliberately not a record: generated ToString must never disclose credentials/settings.
 internal sealed class BridgeSettings(
     IPAddress host, int port, BridgeTlsMode tlsMode, string username,
-    string password, byte[] certificateDer, IEnumerable<string> allowedFolders)
+    string password, byte[] certificateDer, IEnumerable<string> allowedFolders,
+    FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist, IEnumerable<string>? excludedFolders = null)
 {
     public IPAddress Host { get; } = host;
     public int Port { get; } = port;
@@ -27,9 +37,19 @@ internal sealed class BridgeSettings(
     public string Password { get; } = password;
     public ReadOnlyMemory<byte> CertificateDer { get; } = certificateDer;
     public IReadOnlyList<string> AllowedFolders { get; } = Array.AsReadOnly(allowedFolders.ToArray());
+    public FolderAccessMode FolderAccessMode { get; } = folderAccessMode;
+    public IReadOnlyList<string> ExcludedFolders { get; } = Array.AsReadOnly(excludedFolders?.ToArray() ?? []);
 
-    public bool IsFolderAllowed(string folder) => AllowedFolders.Any(allowed =>
-        string.Equals(allowed, folder, StringComparison.Ordinal) ||
-        (string.Equals(allowed, "INBOX", StringComparison.OrdinalIgnoreCase) &&
-         string.Equals(folder, "INBOX", StringComparison.OrdinalIgnoreCase)));
+    public bool IsFolderAllowed(string folder) => FolderAccessMode switch
+    {
+        FolderAccessMode.Allowlist => AllowedFolders.Any(allowed => FolderNamesEqual(allowed, folder)),
+        FolderAccessMode.AllExcept => AllowedFolders.Count == 0 &&
+            !ExcludedFolders.Any(excluded => FolderNamesEqual(excluded, folder)),
+        _ => false
+    };
+
+    internal static bool FolderNamesEqual(string left, string right) =>
+        string.Equals(left, right, StringComparison.Ordinal) ||
+        (string.Equals(left, "INBOX", StringComparison.OrdinalIgnoreCase) &&
+         string.Equals(right, "INBOX", StringComparison.OrdinalIgnoreCase));
 }

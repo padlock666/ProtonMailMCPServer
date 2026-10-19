@@ -89,7 +89,7 @@ In this execution environment, restore used `--packages /tmp/protonmcp-packages`
 
 ## Configuration and usage documentation
 
-[CONFIGURATION.md](CONFIGURATION.md) is the operator reference for JSON settings, file locations, permissions, allowlists, credentials, TLS pins, and configuration changes. [USAGE.md](USAGE.md) covers building, stdio launch, current capabilities, limits, diagnostics, and live acceptance status. Keep operational instructions in those guides and link to them from the README rather than maintaining duplicate setup instructions here.
+[CONFIGURATION.md](CONFIGURATION.md) is the operator reference for JSON settings, file locations, permissions, folder access policies, credentials, TLS pins, and configuration changes. [USAGE.md](USAGE.md) covers building, stdio launch, current capabilities, limits, diagnostics, and live acceptance status. Keep operational instructions in those guides and link to them from the README rather than maintaining duplicate setup instructions here.
 
 When implementation changes affect settings or validation, update `CONFIGURATION.md` and [examples/config.example.json](../examples/config.example.json) in the same task. Keep the example synchronized with the documented JSON and use placeholders only. When they affect launch arguments, client setup, exposed tools/contracts, results, limits, diagnostics, shutdown, or supported workflows, update `USAGE.md`. Review both guides for each implementation phase, including changes to readiness or live evidence, and update their README links/descriptions if needed. Document only implemented behavior as available; label planned interfaces and unverified Bridge compatibility explicitly.
 

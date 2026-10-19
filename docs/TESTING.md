@@ -8,7 +8,7 @@ Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge
 
 Exercise observable behavior rather than duplicating method implementations:
 
-- Exact folder allowlist enforcement, including empty configuration, case rules for INBOX, and rejection of implicit descendants.
+- Legacy and explicit allowlist enforcement, explicit AllExcept opt-in (including empty exclusions), invalid/mixed policy rejection, case rules for INBOX, and exact names without implicit descendants.
 - Configuration and protected-file validation: missing/invalid fields, non-loopback host, unsafe ownership/permissions for the JSON, certificate, and password, symlinked files or ancestors, writable ancestors, invalid certificates, and redacted failures.
 - Search AND semantics, recipient To/Cc matching, unread tri-state, sender-date bounds (`SENTSINCE`/`SENTBEFORE`), invalid ranges, default/max limits, descending UID results, and truncation.
 - Folder + UIDVALIDITY + UID identity, stale epoch rejection, and missing message behavior.
@@ -84,7 +84,7 @@ The live test is `LiveAcceptance.OperatorPreparedFolderPreservesState`. Category
 
 Prepare these **external** files in a private directory outside the checkout (symlink paths resolving into the checkout are rejected):
 
-- A normal application JSON configuration, with exactly one allowed dedicated folder, excluding INBOX. Its password and public-certificate paths must also be external. Existing production secret/TLS validation applies unchanged.
+- A normal application JSON configuration in allowlist mode (legacy or explicit), with exactly one allowed dedicated folder, excluding INBOX. AllExcept mode is rejected by the live suite. Its password and public-certificate paths must also be external. Existing production secret/TLS validation applies unchanged.
 - A fixture manifest, at most 65,536 bytes, with the case-sensitive schema below. It describes **every** message in the folder (2–50 messages); no automatically adopted baseline is written. Known identifiers must be supplied by the operator through read-only inspection in a separate trusted client. Do not obtain them by inspecting Bridge stores. The suite compares this baseline before and after reads and after failure/recovery stages.
 
 ```json
@@ -141,7 +141,7 @@ Linux is required for the suite, including `mkfifo` for a synthetic special-file
 
 ## Phase 2 coverage and limitations
 
-`Fixtures/ScriptedImapServer.cs` listens only on an ephemeral loopback port and generates an isolated synthetic TLS certificate. Ordered session scripts admit exact expected commands, then require socket closure; extra commands or connections fail. Tests execute the actual `MailKitMailbox`, not a mock of `IReadOnlyMailbox`. MailKit's initial namespace/INBOX metadata discovery is included in each authenticated script; only allowlisted selectable folders are returned and only approved folders may be opened.
+`Fixtures/ScriptedImapServer.cs` listens only on an ephemeral loopback port and generates an isolated synthetic TLS certificate. Ordered session scripts admit exact expected commands, then require socket closure; extra commands or connections fail. Tests execute the actual `MailKitMailbox`, not a mock of `IReadOnlyMailbox`. MailKit's initial namespace/INBOX metadata discovery is included in each authenticated script; only selectable folders permitted by the configured policy are returned and only permitted folders may be opened.
 
 Protocol evidence covers both required TLS modes, peer pin mismatch/expiry/future validity, absent STARTTLS, authentication rejection, EXAMINE with read-only confirmation, rejection of READ-WRITE or failed EXAMINE, UID-only retrieval, body-structure-first selection, top-level `BODY.PEEK[TEXT]`, nested PEEK sections, attachment-only/unsupported/missing bodies, attachment metadata caps, exact 1 MiB transfers, oversized advertised and actual literals, and output truncation. Search fixtures verify default 20/maximum 50 summaries, descending UIDs, AND filters, To/Cc OR semantics, sender-date bounds, one-sided ranges, and differing synthetic sender/internal dates, unread tri-state, absent metadata, and empty results.
 
@@ -151,6 +151,12 @@ MIME unit tests cover alternative/related primary-body selection, attached text 
 
 No Proton account, personal data, Bridge endpoint, or operator credentials are used. These tests establish pinned MailKit behavior against the scripts, not real Bridge compatibility or persistent flag preservation on Bridge. Phase 4 remains incomplete. Search result UID sets and MailKit metadata parsing are not promised constant-memory for arbitrarily large mailboxes; transfer and returned-result caps still apply.
 
+## Folder policy regression coverage
+
+Synthetic configuration tests cover both explicit modes, legacy compatibility, required/empty/null lists, mixed formats, unknown/duplicate fields, exact names, INBOX case handling, wildcards, and list/name limits. Actual-adapter scripts cover namespace enumeration, selectable unsubscribed labels, new folders on later calls, duplicate/nonselectable/nonexistent entries, Unicode names, the 4,096-folder output boundary and overflow recovery, excluded search/direct reads before connection, unexpected lookup responses, read-only UID/PEEK access to a new label, and rejected/broken/cancelled discovery followed by a fresh connection. MCP process tests use both explicit modes across all three tools and assert sanitized stderr; startup tests reject mixed policies with no stdout. The live manifest gate requires allowlist mode and a dedicated folder.
+
+These regressions use synthetic fixtures only. AllExcept discovery and label behavior have not been verified against real Bridge; the existing live suite remains restricted to its dedicated allowlist and does not establish broad-discovery compatibility.
+
 ## Phase 3 coverage and limitations
 
 `Mcp/ToolTests.cs` launches the built application through the official 2.2.0 SDK client with temporary synthetic settings pinned to `ScriptedImapServer`. Discovery checks exactly the approved names, descriptions, read-only/non-destructive annotations, strict input schemas, required/optional arguments, output properties and content-status spellings. Calls exercise the actual adapter, structured/text result agreement, absent summary fields, complete message identity, filters, unread tri-state, successful empty searches, attachment metadata and truncation, content statuses, and body truncation.
@@ -159,4 +165,4 @@ Input failures are tested before any fixture connection. Runtime fixtures cover 
 
 The SDK cancellation regression sends an explicit `notifications/cancelled` for a known request ID through `McpClient.SendMessageAsync`, asserts the pending SDK request is cancelled, and requires a successful subsequent call within five seconds. Merely cancelling the high-level SDK call's local token did not reliably deliver server cancellation in this environment; do not infer prompt remote cleanup from a cancelled local await. Received cancellation notifications propagate to the adapter. Captured raw stdio tests cover complete tool results and stdin EOF during a stalled LOGOUT: EOF drains the active operation under its existing 30-second deadline, then exits cleanly. It does not promise immediate cancellation on EOF. Child-process termination also closes its sockets; no CLOSE/expunge command is admitted.
 
-SDK client process tests use the initialize-handshake revision `2025-11-25`; the existing default-options client initialization/discovery test is retained as well. Every captured tool diagnostic must match a fixed grammar of operation/correlation/duration/outcome, excluding sensitive fixture values. Separate stdout capture parses every line as MCP JSON and checks the result. Package versions/locks and the adapter implementation are unchanged. These tests establish the MCP contracts and pinned adapter behavior against synthetic scripts, never Bridge compatibility or live flag preservation.
+SDK client process tests use the initialize-handshake revision `2025-11-25`; the existing default-options client initialization/discovery test is retained as well. Every captured tool diagnostic must match a fixed grammar of operation/correlation/duration/outcome, excluding sensitive fixture values. Separate stdout capture parses every line as MCP JSON and checks the result. Package versions and locks remain unchanged; folder-policy adapter changes are covered above. These tests establish the MCP contracts and pinned adapter behavior against synthetic scripts, never Bridge compatibility or live flag preservation.

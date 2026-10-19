@@ -35,9 +35,11 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
     }
 
     public BridgeSettings Settings(BridgeTlsMode mode = BridgeTlsMode.SslOnConnect, byte[]? pin = null,
-        string[]? folders = null) => new(IPAddress.Loopback, Port, mode,
+        string[]? folders = null, FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist,
+        string[]? excludedFolders = null) => new(IPAddress.Loopback, Port, mode,
             SyntheticConfiguration.SentinelUsername, SyntheticConfiguration.SentinelPassword,
-            pin ?? CertificateDer, folders ?? ["INBOX"]);
+            pin ?? CertificateDer, folders ?? (folderAccessMode == FolderAccessMode.AllExcept ? [] : ["INBOX"]),
+            folderAccessMode, excludedFolders);
 
     public static Step[] Login(params Step[] operation) =>
     [

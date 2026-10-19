@@ -8,7 +8,7 @@ Allow a trusted local MCP client to discover permitted folders, search message s
 
 The MVP serves one user and one Bridge account on Linux. The client starts the application as a stdio child process. Bridge remains a separately installed and operated dependency. The server must not manage Bridge login, Proton encryption keys, or Bridge's internal cache.
 
-Expose only explicitly configured folders, initially `INBOX`. Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Exclude HTTP, SMTP, body search, attachment payloads, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
+Expose folders permitted by an explicit configuration policy: a narrow allowlist, initially `INBOX`, or owner-requested `AllExcept` access (authorized 2026-10-19). Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Exclude HTTP, SMTP, body search, attachment payloads, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
 
 ## Architecture
 
@@ -46,7 +46,7 @@ Explicitly register approved tools rather than broadly discovering every attribu
 
 ### `list_folders`
 
-No arguments. Return existing, selectable folders from the allowlist, using Bridge's full folder names. Do not return unapproved folder names or create, subscribe to, or repair missing folders. Nonselectable and missing entries are not usable folders.
+No arguments. Return existing, selectable folders permitted by the configured policy, using Bridge's full folder names. Allowlist mode looks up configured names. `AllExcept` mode includes INBOX and enumerates all advertised personal, shared, and other namespaces with MailKit's typed folder-list API, including unsubscribed folders, then filters exclusions and duplicates. Enumerate on each call so new folders/labels appear automatically. Return at most 4,096 folders with control-free nonblank full names of at most 1,024 characters; exceeding the count fails with `protocol_failure` without a partial result. Do not return denied folder names or create, subscribe to, or repair folders. Nonselectable and missing entries are not usable folders.
 
 ### `search_messages`
 
@@ -65,7 +65,7 @@ Each summary includes folder, UIDVALIDITY, UID, From, To/Cc, subject, sender dat
 
 ### `get_message`
 
-Required inputs: folder full name, UIDVALIDITY, and UID. Validate unsigned identifiers and recheck the folder allowlist before network retrieval.
+Required inputs: folder full name, UIDVALIDITY, and UID. Validate unsigned identifiers and check the folder policy before connecting and against the resolved full name before opening. Search enforces the same policy.
 
 After opening the folder read-only, compare its current UIDVALIDITY. Reject a mismatch as a stale reference; do not reinterpret the UID in the new validity epoch. A missing UID returns not-found, including disappearance between summary and body fetch.
 
@@ -105,9 +105,11 @@ Configuration errors fail startup clearly and safely. Bridge availability is che
 
 ## Configuration and observability
 
-Load explicit configuration from outside the repository using a configuration-file path. Require owner-private regular files and private parent directories for the JSON settings, exported public certificate, and password; reject symlinks and writable ancestors before reading through validated handles. Required settings are Bridge username, IMAP port, explicit TLS mode, exported public certificate path, password-file path, and a nonempty folder allowlist. Host defaults to literal `127.0.0.1`; reject non-loopback addresses. Keep deadline and content/result limits fixed for the MVP.
+Load explicit configuration from outside the repository using a configuration-file path. Require owner-private regular files and private parent directories for the JSON settings, exported public certificate, and password; reject symlinks and writable ancestors before reading through validated handles. Required settings are Bridge username, IMAP port, explicit TLS mode, exported public certificate path, password-file path, and a valid folder access policy. Host defaults to literal `127.0.0.1`; reject non-loopback addresses. Keep deadline and content/result limits fixed for the MVP.
 
-The setup instructions will start the allowlist at `INBOX`; runtime must not silently replace a missing/empty allowlist. Folder names match configured full names, with the IMAP-defined case-insensitive handling of `INBOX`. No wildcards or automatic descendant access.
+The setup template starts with `FolderAccess: { Mode: "Allowlist", AllowedFolders: ["INBOX"] }`. Legacy top-level `AllowedFolders` remains supported. The alternative is `FolderAccess: { Mode: "AllExcept", ExcludedFolders: [] }`, where an empty exclusion list explicitly permits all folders, including future labels/folders. Reject mixed formats, missing/unknown modes, inappropriate lists, null lists, duplicate/unknown JSON properties, and missing/empty allowlists. See [configuration](docs/CONFIGURATION.md) for the JSON contract and limits.
+
+Both lists match exact full names, with IMAP's case-insensitive `INBOX` exception. No wildcards, prefixes, or implicit descendant rules. Exclusions restrict folder access only: a message with an excluded label can still be returned from another permitted folder/label. `AllExcept` grants access to newly created folders automatically. The live acceptance suite continues to require a single dedicated allowlisted folder.
 
 Use stderr for operation name, duration, outcome, and correlation ID. Stdout is MCP protocol only. Do not log credentials, folders, identifiers, addresses, subjects, search filters, bodies, or production wire traffic. No telemetry or persistent mailbox cache is part of the MVP.
 
@@ -116,7 +118,7 @@ Use stderr for operation name, duration, outcome, and correlation ID. Stdout is 
 | Decision | Reason | Cost or limitation |
 | --- | --- | --- |
 | Stdio and one local user | Small deployment and trust model | No remote/shared service |
-| Allowlist, initially INBOX | Explicit data access | User must configure additional full folder names |
+| Allowlist, initially INBOX; explicit AllExcept option | Narrow default plus convenient access across Bridge labels | AllExcept automatically exposes future folders; exclusions do not hide overlapping messages |
 | One connection per operation | Simple ownership, cleanup, and recovery | Repeated TLS/authentication overhead |
 | Serialized calls | Avoid shared IMAP state/concurrency hazards | No parallel mailbox throughput |
 | No persistent cache | Minimize retained plaintext and invalidation logic | Repeated IMAP work |
@@ -125,7 +127,7 @@ Use stderr for operation name, duration, outcome, and correlation ID. Stdout is 
 | Exact certificate pin | Trust the specific local Bridge instance | Manual update when the certificate changes |
 | Protocol plus live tests | Verify commands and Bridge behavior | Live compatibility must be checked separately |
 
-The MVP does not promise constant-memory searches for arbitrarily large mailboxes, transactional snapshots, or stable results while other clients modify mail. UIDVALIDITY protects message identity; it is not a mailbox snapshot. Bridge labels/folders may expose the same underlying message in multiple locations; no cross-folder deduplication is planned.
+The MVP does not promise constant-memory searches or folder enumeration for arbitrarily large mailboxes, transactional snapshots, or stable results while other clients modify mail. AllExcept discovery materializes folder metadata and the complete permitted folder list under the existing deadline. UIDVALIDITY protects message identity; it is not a mailbox snapshot. Bridge labels/folders may expose the same underlying message in multiple locations; no cross-folder deduplication is planned.
 
 ## Primary references
 

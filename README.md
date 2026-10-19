@@ -6,13 +6,13 @@ A local, read-only MCP server under development for accessing a Proton Mail mail
 
 ## Configuration and usage
 
-Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder allowlists, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes the three approved read-only tools.
+Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder access policies, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes the three approved read-only tools.
 
 ## MVP
 
 - C# and .NET 10, the official MCP C# SDK, and MailKit/MimeKit.
 - One trusted local client, one Bridge account, and MCP over stdio.
-- A folder allowlist, initially `INBOX`.
+- A narrow folder allowlist, initially `INBOX`, or explicit `AllExcept` access for all folders and labels with optional exclusions.
 - Three tools: `list_folders`, `search_messages`, and `get_message`.
 - Header/date/unread searches, text bodies, and attachment metadata.
 - No sending, deleting, moving, copying, modifying, expunging, or marking messages as read.
@@ -24,7 +24,7 @@ There is no HTTP service, body search, attachment download, background synchroni
 | Document | Purpose |
 | --- | --- |
 | [Linux/Bridge setup](docs/LINUX-SETUP.md) | Installation, public-certificate export/replacement, and operator preparation |
-| [Configuration guide](docs/CONFIGURATION.md) | Settings, file permissions, credentials, allowlists, and TLS pins |
+| [Configuration guide](docs/CONFIGURATION.md) | Settings, file permissions, credentials, folder policies, and TLS pins |
 | [Usage guide](docs/USAGE.md) | Build/verification, stdio launch, current capabilities, and troubleshooting |
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
@@ -46,7 +46,7 @@ Automated development and tests must work without a Proton account or personal m
 
 ## Privacy boundary
 
-The server receives decrypted mail from Bridge. Only configured folders are exposed, but a local MCP client can forward returned text to its model provider. Local transport does not imply local model processing. See [SECURITY.md](SECURITY.md) before enabling access to real mail.
+The server receives decrypted mail from Bridge. The configured policy controls exposed folders, and a local MCP client can forward returned text to its model provider. `AllExcept` automatically permits new folders and labels; excluding a label folder does not hide its messages through other permitted folders. Local transport does not imply local model processing. See [SECURITY.md](SECURITY.md) before enabling access to real mail.
 
 ## Next step
 

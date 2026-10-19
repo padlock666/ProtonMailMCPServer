@@ -72,4 +72,15 @@ public sealed class LiveAcceptanceSafetyTests
         Assert.Throws<InvalidOperationException>(() => manifest.Validate(server.Settings()));
         Assert.Equal(0, server.AcceptedConnections);
     }
+
+    [Fact]
+    public async Task AllExceptCannotBroadenLiveAcceptance()
+    {
+        await using var server = new ScriptedImapServer();
+        var manifest = new LiveManifest { Folder = "Approved", UidValidity = 7 };
+        var error = Assert.Throws<InvalidOperationException>(() => manifest.Validate(server.Settings(
+            folderAccessMode: ProtonMailMcp.Configuration.FolderAccessMode.AllExcept)));
+        Assert.Equal("live: dedicated_folder_required", error.Message);
+        Assert.Equal(0, server.AcceptedConnections);
+    }
 }

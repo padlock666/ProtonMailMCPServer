@@ -13,6 +13,7 @@ namespace ProtonMailMcp.Mail;
 internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox, IDisposable
 {
     private readonly SemaphoreSlim gate = new(1, 1);
+    private const int MaxFolderResults = 4096;
     // Internal test seam for deterministic short deadline fixtures; production always uses 30 seconds.
     internal TimeSpan OperationDeadline { get; init; } = TimeSpan.FromSeconds(30);
     internal TimeProvider DeadlineClock { get; init; } = TimeProvider.System;
@@ -21,21 +22,47 @@ internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox
 
     public Task<IReadOnlyList<FolderResult>> ListFoldersAsync(CancellationToken cancellationToken)
     {
-        if (settings.AllowedFolders.Count == 0) throw new MailboxException(MailboxError.DeniedFolder);
+        if (settings.FolderAccessMode == FolderAccessMode.Allowlist && settings.AllowedFolders.Count == 0)
+            throw new MailboxException(MailboxError.DeniedFolder);
         return ExecuteAsync<IReadOnlyList<FolderResult>>(async (client, token) =>
         {
             var folders = new List<FolderResult>();
-            foreach (var name in settings.AllowedFolders)
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            void AddFolder(IMailFolder folder)
             {
-                token.ThrowIfCancellationRequested();
-                try
+                if (folder.Exists && !folder.Attributes.HasFlag(FolderAttributes.NoSelect) &&
+                    !string.IsNullOrWhiteSpace(folder.FullName) && folder.FullName.Length <= 1024 &&
+                    !folder.FullName.Any(char.IsControl) && settings.IsFolderAllowed(folder.FullName) &&
+                    seen.Add(string.Equals(folder.FullName, "INBOX", StringComparison.OrdinalIgnoreCase) ? "INBOX" : folder.FullName))
                 {
-                    var folder = await client.GetFolderAsync(name, token);
-                    if (folder.Exists && !folder.Attributes.HasFlag(FolderAttributes.NoSelect) &&
-                        settings.IsFolderAllowed(folder.FullName) && !folders.Any(item => item.Name == folder.FullName))
-                        folders.Add(new(folder.FullName));
+                    if (folders.Count == MaxFolderResults) throw new MailboxException(MailboxError.ProtocolFailure);
+                    folders.Add(new(folder.FullName));
                 }
-                catch (FolderNotFoundException) { }
+            }
+
+            if (settings.FolderAccessMode == FolderAccessMode.AllExcept)
+            {
+                AddFolder(client.Inbox);
+                var namespaces = client.PersonalNamespaces.Concat(client.SharedNamespaces).Concat(client.OtherNamespaces)
+                    .DistinctBy(item => (item.Path, item.DirectorySeparator));
+                foreach (var ns in namespaces)
+                {
+                    var discovered = await client.GetFoldersAsync(ns, StatusItems.None, subscribedOnly: false, token);
+                    foreach (var folder in discovered)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        AddFolder(folder);
+                    }
+                }
+            }
+            else
+            {
+                foreach (var name in settings.AllowedFolders)
+                {
+                    token.ThrowIfCancellationRequested();
+                    try { AddFolder(await client.GetFolderAsync(name, token)); }
+                    catch (FolderNotFoundException) { }
+                }
             }
             return folders.AsReadOnly();
         }, cancellationToken);

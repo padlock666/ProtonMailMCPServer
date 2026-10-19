@@ -20,7 +20,7 @@ Keep these documents consistent with actual behavior. Treat implementation tasks
 - Never send, delete, move, copy, append, modify flags, mark read/unread, expunge, create/rename/delete folders, or change subscriptions.
 - Open folders only with `FolderAccess.ReadOnly`, verify access, and retrieve body sections using `BODY.PEEK`. Never use read/write selection as a fallback.
 - Do not use SMTP, raw IMAP commands exposed to callers, expunging close operations, or a mutation-capable application interface.
-- Enforce the folder allowlist on every call, including direct message retrieval. Empty allowlists fail closed.
+- Enforce the configured folder access policy on every call, including direct message retrieval. Empty allowlists fail closed; all-except access requires explicit configuration. Exclusions restrict folder access, not messages reachable through other labels/folders.
 - Identify a message using folder + UIDVALIDITY + UID; never retrieve by sequence number or `Message-ID`.
 - Allow encrypted IMAP only to a literal loopback address. Require the configured Bridge certificate pin before authentication. No plaintext fallback, trust-on-first-use, or unconditional certificate acceptance.
 - Keep passwords and real mailbox data out of source control, logs, tool errors, fixtures, and chat output. Do not inspect personal Bridge stores or discover credentials automatically.
@@ -50,7 +50,7 @@ Use the commands in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Never report an 
 
 ## Code review rules
 
-Flag any route to read/write folder access, flag mutation, non-PEEK body fetch, expunge, SMTP, allowlist bypass, stale UID reuse, secret/content leakage, or disabled TLS verification. Verify behavior on errors, cancellation, and cleanup as well as successful reads. Require protocol regression evidence for MailKit upgrades and live regression evidence for Bridge compatibility claims.
+Flag any route to read/write folder access, flag mutation, non-PEEK body fetch, expunge, SMTP, folder-policy bypass, stale UID reuse, secret/content leakage, or disabled TLS verification. Verify behavior on errors, cancellation, and cleanup as well as successful reads. Require protocol regression evidence for MailKit upgrades and live regression evidence for Bridge compatibility claims.
 
 ## Instruction maintenance
 

@@ -14,7 +14,7 @@ Stdio limits exposure to the parent/child process relationship; it is not a sand
 
 | Boundary / risk | Required control | Verification |
 | --- | --- | --- |
-| MCP caller accesses extra folders | Exact configured allowlist checked for all calls | Denied direct UID and search tests |
+| MCP caller accesses denied folders | Explicit folder policy checked for all calls and resolved names | Denied direct UID, search, and discovery protocol tests |
 | Read silently sets flags | Read-only folder open plus PEEK retrieval | Protocol and real Bridge tests |
 | Cleanup deletes flagged messages | No expunge or expunging folder close | Error/cancellation/disconnect transcripts and live flags |
 | Credentials sent to wrong service | Literal loopback restriction, required TLS, exact certificate pin | Endpoint/TLS tests before authentication |
@@ -50,7 +50,11 @@ Use Bridge's generated IMAP credentials, not the Proton account password. Read t
 
 Only configuration paths belong in launch settings. Keep passwords out of command arguments, environment examples, tracked configuration, shell history, and logs. Do not inspect Bridge's internal keyring/cache files or the user's private key. Use placeholders in documentation and synthetic mail in fixtures.
 
-Configuration has an explicit nonempty folder allowlist. No wildcards, path-prefix matching, automatic descendants, or fallback to all folders. Validate before accessing a requested folder. IMAP's special case-insensitive `INBOX` name is the only required case-normalization exception.
+Configuration requires either a nonempty exact allowlist or explicit `AllExcept` mode with an exclusion list (which may be empty to permit all folders). Legacy top-level `AllowedFolders` retains allowlist behavior. Reject mixed formats, inappropriate lists, missing/unknown modes, duplicate/unknown properties, and null lists. Empty allowlists fail closed. Broad access is never inferred from absent or invalid settings.
+
+Check the policy before connecting for search/read, and against the resolved full name before opening. Filter discovery results with the same policy. No wildcard, path-prefix, or implicit descendant matching; IMAP's case-insensitive `INBOX` exception is preserved. Discovery may inspect denied folder metadata internally while enumerating namespaces or resolving hierarchy, but must not return those names or select/read denied folders.
+
+`AllExcept` explicitly authorizes newly created folders and label folders automatically. Excluding a folder restricts that access path only: messages carrying an excluded label may still be returned through another permitted folder/label, including INBOX or All Mail. No message-level label confidentiality is provided. The live acceptance suite rejects `AllExcept` and still requires a single dedicated allowlisted test folder.
 
 The application has no persistent mail cache, content telemetry, mailbox exports, or attachment files. Normal .NET process memory still contains credentials and plaintext during operations; do not promise secure memory erasure or protection from same-user debugging, swap, or OS crash dumps.
 
@@ -58,7 +62,7 @@ Production logs may contain operation name, correlation ID, duration, and saniti
 
 ## Resource limits and untrusted content
 
-Maximum search results: 50, default 20. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
+Maximum folder results: 4,096, with control-free full names of at most 1,024 characters; exceeding the count fails without partial output. MailKit namespace metadata parsing is not promised constant-memory. Maximum search results: 50, default 20. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
 
 Do not buffer an entire message or attachment to enforce a body-only limit afterward. Bound MIME/conversion work and return explicit metadata-only content status if the selected body cannot be read safely. Keep failures distinct from successful empty searches.
 

@@ -22,7 +22,8 @@ internal static class ConfigurationLoader
             RequireAbsolutePath(path);
             await using var config = LinuxProtectedFile.Open(path, LinuxProtectedFile.FileKind.Configuration);
             var bytes = await ReadBoundedAsync(config, 65536, cancellationToken);
-            var document = JsonSerializer.Deserialize<ConfigurationDocument>(bytes, JsonOptions)
+            using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { AllowDuplicateProperties = false });
+            var document = json.RootElement.Deserialize<ConfigurationDocument>(JsonOptions)
                 ?? throw new ConfigurationException("configuration_invalid");
             if (string.IsNullOrWhiteSpace(document.Host) || !IPAddress.TryParse(document.Host, out var host) ||
                 !IPAddress.IsLoopback(host) || document.Host.Contains('%') ||
@@ -38,10 +39,7 @@ internal static class ConfigurationLoader
             };
             if (string.IsNullOrWhiteSpace(document.Username) || document.Username.Any(char.IsControl))
                 throw new ConfigurationException("configuration_username_invalid");
-            if (document.AllowedFolders is not { Length: > 0 } || document.AllowedFolders.Length > 256 ||
-                document.AllowedFolders.Any(f => string.IsNullOrWhiteSpace(f) || f.Length > 1024 ||
-                    f.Any(char.IsControl) || f.Contains('*') || f.Contains('%')))
-                throw new ConfigurationException("configuration_allowlist_invalid");
+            var (folderMode, allowedFolders, excludedFolders) = ReadFolderAccess(document, json.RootElement);
             RequireAbsolutePath(document.CertificateFile);
             RequireAbsolutePath(document.PasswordFile);
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
@@ -53,7 +51,7 @@ internal static class ConfigurationLoader
             if (string.IsNullOrWhiteSpace(password) || password.Any(char.IsControl))
                 throw new ConfigurationException("configuration_password_invalid");
             return new BridgeSettings(host, document.Port, tlsMode, document.Username, password,
-                certificateDer, document.AllowedFolders);
+                certificateDer, allowedFolders, folderMode, excludedFolders);
         }
         catch (OperationCanceledException) { throw; }
         catch (ConfigurationException) { throw; }
@@ -62,6 +60,41 @@ internal static class ConfigurationLoader
         {
             throw new ConfigurationException("configuration_invalid_or_unavailable");
         }
+    }
+
+    private static (FolderAccessMode Mode, string[] Allowed, string[] Excluded) ReadFolderAccess(
+        ConfigurationDocument document, JsonElement root)
+    {
+        if (!root.TryGetProperty("FolderAccess", out var policy))
+        {
+            ValidateFolderNames(document.AllowedFolders, requireNonempty: true, "configuration_allowlist_invalid");
+            return (FolderAccessMode.Allowlist, document.AllowedFolders!, []);
+        }
+
+        const string error = "configuration_folder_access_invalid";
+        if (root.TryGetProperty("AllowedFolders", out _) || document.FolderAccess is not { } access)
+            throw new ConfigurationException(error);
+        switch (access.Mode)
+        {
+            case "Allowlist":
+                if (policy.TryGetProperty("ExcludedFolders", out _)) throw new ConfigurationException(error);
+                ValidateFolderNames(access.AllowedFolders, requireNonempty: true, error);
+                return (FolderAccessMode.Allowlist, access.AllowedFolders!, []);
+            case "AllExcept":
+                if (policy.TryGetProperty("AllowedFolders", out _)) throw new ConfigurationException(error);
+                ValidateFolderNames(access.ExcludedFolders, requireNonempty: false, error);
+                return (FolderAccessMode.AllExcept, [], access.ExcludedFolders!);
+            default:
+                throw new ConfigurationException(error);
+        }
+    }
+
+    private static void ValidateFolderNames(string[]? names, bool requireNonempty, string error)
+    {
+        if (names is null || (requireNonempty && names.Length == 0) || names.Length > 256 ||
+            names.Any(f => string.IsNullOrWhiteSpace(f) || f.Length > 1024 ||
+                f.Any(char.IsControl) || f.Contains('*') || f.Contains('%')))
+            throw new ConfigurationException(error);
     }
 
     private static void RequireAbsolutePath(string? path)

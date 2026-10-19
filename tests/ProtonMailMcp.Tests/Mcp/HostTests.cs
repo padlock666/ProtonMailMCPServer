@@ -131,6 +131,7 @@ public sealed class HostTests
     [InlineData("invalid-config")]
     [InlineData("writable-config")]
     [InlineData("writable-certificate")]
+    [InlineData("ambiguous-folder-policy")]
     public async Task StartupFailureIsSanitizedAndStderrOnly(string scenario)
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
@@ -141,6 +142,11 @@ public sealed class HostTests
         if (scenario == "invalid-config")
         {
             fixture.Values["TlsMode"] = SyntheticConfiguration.SentinelPassword;
+            fixture.Save();
+        }
+        if (scenario == "ambiguous-folder-policy")
+        {
+            fixture.Values["FolderAccess"] = new { Mode = "AllExcept", ExcludedFolders = Array.Empty<string>() };
             fixture.Save();
         }
         if (scenario == "writable-config")

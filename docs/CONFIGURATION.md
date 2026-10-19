@@ -1,12 +1,12 @@
 # Configuration guide
 
-The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract; see the [usage guide](USAGE.md) for building and launching the stdio host and the three implemented tool contracts. Application configuration is unchanged in Phase 4; live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
+The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract, including explicit allowlist and all-except folder policies; see the [usage guide](USAGE.md) for launching the stdio host and the three tools. Live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
 
 ## File locations and loading
 
 Pass exactly `--config /absolute/path/to/config.json` after the application DLL. The configuration file, password file, and public certificate must use absolute paths. Keep real settings and credentials outside the checkout, preferably in a private XDG configuration directory. The application does not infer repository boundaries or relocate files for you.
 
-Only this JSON file supplies application settings. `appsettings.json`, environment variables, and additional command-line overrides are not supported configuration sources. JSON property names and TLS mode values are case-sensitive; unknown properties fail startup. Settings, the password, and the public certificate are loaded once; restart the server after changing them.
+Only this JSON file supplies application settings. `appsettings.json`, environment variables, and additional command-line overrides are not supported configuration sources. JSON property names and mode values are case-sensitive; unknown or duplicate properties fail startup. Settings, the password, and the public certificate are loaded once; restart the server after changing them.
 
 ## JSON settings
 
@@ -20,7 +20,10 @@ Copy [config.example.json](../examples/config.example.json) to a private directo
   "Username": "<bridge-imap-username>",
   "PasswordFile": "/absolute/private/directory/bridge.password",
   "CertificateFile": "/absolute/private/directory/bridge-public.pem",
-  "AllowedFolders": ["INBOX"]
+  "FolderAccess": {
+    "Mode": "Allowlist",
+    "AllowedFolders": ["INBOX"]
+  }
 }
 ```
 
@@ -32,15 +35,35 @@ Copy [config.example.json](../examples/config.example.json) to a private directo
 | `Username` | Yes | Nonblank Bridge IMAP username without control characters |
 | `PasswordFile` | Yes | Absolute path to the separate owner-only file containing the Bridge-generated IMAP password |
 | `CertificateFile` | Yes | Absolute path to the exported public Bridge certificate |
-| `AllowedFolders` | Yes | Nonempty array of exact folder full names; see below |
+| `FolderAccess` | Yes, unless using legacy `AllowedFolders` | Object with explicit `Mode` and the corresponding folder list; see below |
+| `AllowedFolders` | Legacy alternative | Top-level nonempty exact folder list; cannot be combined with `FolderAccess` |
 
 Use Bridge-generated IMAP credentials, not the Proton account password. Read the values from the operator-managed Bridge settings; the server does not discover credentials, log in to Bridge on your behalf, or inspect Bridge's private stores. SMTP settings are not used. Do not infer TLS mode from the port.
 
-## Folder allowlist
+## Folder access policy
 
-Start with a narrow list such as `["INBOX"]`. The list accepts at most 256 entries, each at most 1,024 characters. Blank entries, control characters, and wildcard characters `*` and `%` are rejected. Empty lists fail closed.
+Start with `FolderAccess.Mode` set to `Allowlist` and `AllowedFolders` set to a narrow list such as `["INBOX"]`, as in the complete example above. Missing or empty allowlists fail startup. New folders require a configuration update and restart before access is permitted.
 
-Names match exactly, including case, except that `INBOX` is case-insensitive. Allowing a parent folder does not allow its descendants. Use full folder names as exposed by Bridge; missing and nonselectable folders are omitted from discovery, not created or repaired. Search and direct message retrieval both recheck the allowlist.
+To permit all Bridge folders and labels without enumerating them, replace the `FolderAccess` object with:
+
+```json
+{
+  "Mode": "AllExcept",
+  "ExcludedFolders": []
+}
+```
+
+An empty exclusion list explicitly permits every selectable folder. To block particular folders, set `ExcludedFolders` to their exact full names, for example `["Labels/Private", "Trash"]`. `AllExcept` discovers folders afresh on each listing, includes unsubscribed folders, and automatically permits newly created folders and labels. It does not change subscriptions. Search and read still target one folder per call.
+
+Folder listing returns at most 4,096 permitted folders, each with a usable full name of at most 1,024 characters. A larger permitted set fails with `protocol_failure` and returns no partial list. Direct search/read still follow the policy; narrow the policy to reduce the discovery result. Namespace metadata parsing remains subject to MailKit's memory use and the existing operation deadline.
+
+**Exclusions block access through a folder, not access to every message carrying that label.** The same message can remain accessible through another permitted folder or label, including INBOX or All Mail. This feature does not implement message-level label filtering.
+
+Both lists accept at most 256 entries, each at most 1,024 characters. Null/blank entries, control characters, and wildcard characters `*` and `%` are rejected. Names match exactly, including case, except that `INBOX` is case-insensitive. Allowing or excluding a parent folder has no effect on its descendants: excluding `Labels/Private` still permits `Labels/Private/Child` in `AllExcept` mode. Use full folder names as exposed by Bridge. Missing and nonselectable folders are omitted from discovery, not created or repaired. Search and direct retrieval check the policy before connecting and again against the resolved full folder name before opening it.
+
+`Mode` must be exactly `Allowlist` or `AllExcept`. The corresponding list is required, even when `ExcludedFolders` is empty. Supplying `ExcludedFolders` in `Allowlist` mode or `AllowedFolders` in `AllExcept` mode fails startup, including null or empty values. Missing/unknown modes and unknown fields also fail startup; no policy falls back to all folders.
+
+Existing configurations with only top-level `"AllowedFolders": ["INBOX"]` remain supported and use allowlist mode. To migrate, remove that top-level property and add the `FolderAccess` object. Combining the formats fails startup, even if the top-level list is null. The live acceptance suite requires allowlist mode with exactly one dedicated test folder; it rejects `AllExcept`.
 
 ## Protected local files
 

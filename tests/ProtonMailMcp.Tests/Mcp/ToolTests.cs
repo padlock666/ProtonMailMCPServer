@@ -101,6 +101,43 @@ public sealed class ToolTests
     }
 
     [Theory]
+    [InlineData("Allowlist")]
+    [InlineData("AllExcept")]
+    public async Task ExplicitFolderPoliciesApplyToAllThreeTools(string mode)
+    {
+        var lookup = new Step("LIST \"\" NewLabel", "* LIST () \"/\" NewLabel\r\n{tag} OK list\r\n");
+        var listing = mode == "Allowlist" ? lookup : new Step("LIST \"\" \"\\*\"",
+            "* LIST () \"/\" INBOX\r\n* LIST (\\Noselect) \"/\" Labels\r\n" +
+            "* LIST () \"/\" NewLabel\r\n* LIST () \"/\" Private\r\n{tag} OK list\r\n");
+        var examine = Examine() with { Command = "EXAMINE NewLabel" };
+        await using var server = new ScriptedImapServer(
+            new Session(Login(listing, Logout())),
+            new Session(Login(lookup, examine, new("UID SEARCH ALL", "* SEARCH\r\n{tag} OK empty\r\n"), Logout())),
+            new Session(Login(lookup, examine, Summary(), Body("hello"), Logout())));
+        object policy = mode == "Allowlist" ? new { Mode = mode, AllowedFolders = new[] { "NewLabel" } } :
+            (object)new { Mode = mode, ExcludedFolders = new[] { "inbox", "Private" } };
+        await using var host = await ClientHost.StartAsync(server, folderAccess: policy);
+        foreach (var denied in new[] { "INBOX", "Private" })
+        {
+            Error(await host.Client.CallToolAsync("search_messages", new Dictionary<string, object?> { ["folder"] = denied }), "denied_folder");
+            var deniedReference = Reference();
+            deniedReference["folder"] = denied;
+            Error(await host.Client.CallToolAsync("get_message", deniedReference), "denied_folder");
+        }
+        Assert.Equal(0, server.AcceptedConnections);
+        var folders = Data(await host.Client.CallToolAsync("list_folders"));
+        Assert.Equal("NewLabel", Assert.Single(folders.GetProperty("folders").EnumerateArray()).GetProperty("name").GetString());
+        var search = Data(await host.Client.CallToolAsync("search_messages", new Dictionary<string, object?> { ["folder"] = "NewLabel" }));
+        Assert.Empty(search.GetProperty("messages").EnumerateArray());
+        var reference = Reference();
+        reference["folder"] = "NewLabel";
+        var message = Data(await host.Client.CallToolAsync("get_message", reference));
+        Assert.Equal("hello", message.GetProperty("text").GetString());
+        Assert.Equal("NewLabel", message.GetProperty("summary").GetProperty("reference").GetProperty("folder").GetString());
+        await server.VerifyAsync();
+    }
+
+    [Theory]
     [InlineData(null, "ALL")]
     [InlineData(false, "SEEN")]
     [InlineData(true, "UNSEEN")]
@@ -280,12 +317,18 @@ public sealed class ToolTests
         private readonly SyntheticConfiguration config = new();
         private readonly ConcurrentQueue<string> stderr = new();
         public McpClient Client { get; private set; } = null!;
-        public static async Task<ClientHost> StartAsync(ScriptedImapServer server, bool wrongPin = false)
+        public static async Task<ClientHost> StartAsync(ScriptedImapServer server, bool wrongPin = false,
+            object? folderAccess = null)
         {
             var host = new ClientHost();
             host.config.Values["Port"] = server.Port;
             host.config.Values["TlsMode"] = "SslOnConnect";
             host.config.Values["AllowedFolders"] = new[] { "INBOX" };
+            if (folderAccess is not null)
+            {
+                host.config.Values.Remove("AllowedFolders");
+                host.config.Values["FolderAccess"] = folderAccess;
+            }
             if (!wrongPin) File.WriteAllBytes(host.config.CertificatePath, server.CertificateDer);
             host.config.Save();
             host.Client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions

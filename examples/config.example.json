@@ -5,5 +5,8 @@
   "Username": "<bridge-imap-username>",
   "PasswordFile": "/absolute/private/directory/bridge.password",
   "CertificateFile": "/absolute/private/directory/bridge-public.pem",
-  "AllowedFolders": ["INBOX"]
+  "FolderAccess": {
+    "Mode": "Allowlist",
+    "AllowedFolders": ["INBOX"]
+  }
 }
