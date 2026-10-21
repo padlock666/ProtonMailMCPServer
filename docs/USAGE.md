@@ -47,7 +47,7 @@ The tools call the tested adapter for permitted folder discovery, typed searches
 
 | Behavior | Implemented tool boundary |
 | --- | --- |
-| Search | Sender, To/Cc recipient, subject, sender dates, unread status; default 20 results, maximum 50, highest UIDs first |
+| Search | Sender, To/Cc recipient, subject, sender dates, unread status; cursor pagination, default 20 results per page, maximum 50, highest UIDs first |
 | Message identity | Folder full name + UIDVALIDITY + UID; stale identities are rejected |
 | Body | Primary non-attachment plain text, otherwise HTML converted to text without rendering or fetching external references |
 | Transfer/output | Selected text part at most 1 MiB; returned text at most 32,000 characters, with explicit status/truncation |
@@ -57,19 +57,19 @@ The tools call the tested adapter for permitted folder discovery, typed searches
 
 Message content, links, and filenames remain untrusted data. A local client may forward tool results to a hosted model provider; stdio transport does not guarantee local model processing. Read [SECURITY.md](../SECURITY.md) before enabling real-mail access.
 
-Folder discovery returns at most 4,096 permitted folders and fails without a partial list if this count is exceeded. It follows the configured `Allowlist` or `AllExcept` policy; see [configuration](CONFIGURATION.md#folder-access-policy). AllExcept automatically exposes new folders and labels. Exclusions block folder access only: a message may still be returned through another permitted label/folder, including INBOX or All Mail. Tool inputs and outputs are unchanged.
+Folder discovery returns at most 4,096 permitted folders and fails without a partial list if this count is exceeded. It follows the configured `Allowlist` or `AllExcept` policy; see [configuration](CONFIGURATION.md#folder-access-policy). AllExcept automatically exposes new folders and labels. Exclusions block folder access only: a message may still be returned through another permitted label/folder, including INBOX or All Mail. Folder discovery has no pagination arguments; search cursors are described below.
 
 ## Tool inputs and results
 
 | Tool | Arguments | Successful structured result |
 | --- | --- | --- |
 | `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable permitted folders |
-| `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `sentStart`, `sentEnd`, `unread`, `limit` | `{"messages":[summary],"truncated":false}` |
+| `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `sentStart`, `sentEnd`, `unread`, `limit`, `cursor` | `{"messages":[summary],"truncated":false,"nextCursor":null}` |
 | `get_message` | Required `folder`, `uidValidity`, `uid` | `{"summary":summary,"text":"...","contentStatus":"available","truncated":false,"attachments":[],"attachmentsTruncated":false}` |
 
 A summary has `reference` (`folder`, `uidValidity`, `uid`), `from`, `to`, `cc`, `subject`, `senderDate`, `internalDate`, `seen`, and `size`. Optional metadata is explicitly null when absent. Dates in results use ISO 8601 timestamps; size is reported bytes. Preserve all three reference fields from a search result when calling `get_message`; identifiers are integers from 1 through 4,294,967,295.
 
-Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Sender dates are exact `YYYY-MM-DD`, inclusive `sentStart` and exclusive `sentEnd`, with start strictly before end if both are supplied. Filtering uses the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, ignoring time and timezone (no UTC conversion). There is no internal-date fallback; missing, malformed or inaccurate sender dates can affect matching. This replaces the former delivery-date behavior as of 2026-10-18. The old `receivedStart`/`receivedEnd` arguments return `invalid_input`; update clients and restart the server to refresh tool discovery. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology. Narrow filters if `truncated` is true.
+Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Sender dates are exact `YYYY-MM-DD`, inclusive `sentStart` and exclusive `sentEnd`, with start strictly before end if both are supplied. Filtering uses the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, ignoring time and timezone (no UTC conversion). There is no internal-date fallback; missing, malformed or inaccurate sender dates can affect matching. This replaces the former delivery-date behavior as of 2026-10-18. The old `receivedStart`/`receivedEnd` arguments return `invalid_input`; update clients and restart the server to refresh tool discovery. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology.
 
 For messages dated during a calendar month, call `search_messages` with:
 
@@ -77,24 +77,34 @@ For messages dated during a calendar month, call `search_messages` with:
 {"folder":"INBOX","sentStart":"2025-04-01","sentEnd":"2025-05-01","limit":20}
 ```
 
+To continue, pass the returned `nextCursor` as `cursor` and repeat the same folder and filters. Omission/null are equivalent for filters; INBOX is case-insensitive, while other folder names and substring values must match exactly. `limit` may change; omitting it uses 20 on that call. Omit or pass null for `cursor` to start again. A cursor is an opaque 98-character string; do not construct, edit, or log it.
+
+```json
+{"folder":"INBOX","sentStart":"2025-04-01","sentEnd":"2025-05-01","limit":20,"cursor":"<nextCursor copied from previous result>"}
+```
+
+`truncated` is true exactly when `nextCursor` is non-null. Stop only on a null cursor: messages can disappear between search and fetch, producing a short or empty page that still has a continuation. Later pages use matching UIDs below the previous candidate boundary, so higher-UID arrivals do not shift them. Each page evaluates filters again; unread changes can add/remove matches, and replaying a cursor can yield different results. This is not a mailbox snapshot. Search may still materialize all matching UIDs within the remaining range.
+
+Cursors are tied to this server process, folder, filters, and UIDVALIDITY. Server restart invalidates them with `invalid_input`; changed folder epochs return `stale_reference`. Start a new search in either case. Refresh tool discovery when upgrading; requests without cursors keep their first-page behavior, but strict clients must accept the added nullable `nextCursor` output. The full [pagination contract](SEARCH-PAGINATION.md) covers cursor lifetime and mailbox-change behavior. Live Bridge pagination remains unverified.
+
 `contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, and reported `size`. Filenames are data and must never be treated as paths. No attachment payload is returned.
 
 Successes populate MCP `structuredContent` and a text content block containing the same JSON for compatible clients. Tool execution failures set `isError: true`, omit structured content, and return one text block containing only the fixed code below. They never masquerade as empty successful results. Received MCP cancellation notifications cancel the adapter operation and release its connection. With the pinned SDK in this environment, cancelling a high-level client call’s local token did not reliably deliver remote cancellation; a cancelled local await alone is not evidence of server cleanup. The process regression explicitly sends and awaits `notifications/cancelled` for a known request ID using `McpClient.SendMessageAsync`. See the [test evidence](TESTING.md#phase-3-coverage-and-limitations) and [explicit cancellation example in the process tests](../tests/ProtonMailMcp.Tests/Mcp/ToolTests.cs).
 
 | Error code | Meaning |
 | --- | --- |
-| `invalid_input` | Missing, unknown, malformed, or out-of-range arguments |
+| `invalid_input` | Missing, unknown, malformed, or out-of-range arguments; invalid/tampered cursor, changed cursor filters, or cursor from another server process |
 | `denied_folder` | Folder is outside the allowlist or is explicitly excluded in AllExcept mode |
 | `folder_unavailable` | Allowed folder is missing or not selectable |
 | `bridge_unavailable` | Connection refused/lost or malformed protocol response |
 | `authentication_failed` | Bridge rejected authentication |
 | `tls_failed` | Required TLS or certificate verification failed |
-| `stale_reference` | UIDVALIDITY changed; search again rather than reuse the UID |
+| `stale_reference` | UIDVALIDITY changed; start a new search rather than reuse the UID or cursor |
 | `message_not_found` | UID is missing or disappeared during retrieval |
 | `timeout` | The 30-second operation deadline expired, including queue time |
 | `protocol_failure` | Rejected command, unconfirmed read-only access, folder listing over 4,096 permitted folders, or unexpected internal failure |
 
-Each completed/cancelled tool call emits a stderr diagnostic containing only operation name, random correlation ID, elapsed milliseconds, and fixed outcome. SDK/framework payload logging remains disabled. No folder, identifier, filters, mail, credentials, or exception text is logged.
+Each completed/cancelled tool call emits a stderr diagnostic containing only operation name, random correlation ID, elapsed milliseconds, and fixed outcome. SDK/framework payload logging remains disabled. No folder, identifier, filters, cursor, mail, credentials, or exception text is logged.
 
 ## Official SDK client example
 
@@ -190,7 +200,7 @@ Review the client's trust prompt and model/data policy before enabling tools. Us
 | `stale_reference` | Search again and use the new folder + UIDVALIDITY + UID. During acceptance stop and investigate a changed epoch before preparing a new external manifest. |
 | `message_not_found` | A message disappeared or the identity is wrong. Search again; never substitute sequence number or Message-ID. |
 | `timeout` / connection lost | Check Bridge availability and competing calls. Each operation has 30 seconds including queue time. A later call uses a fresh connection. Send an MCP cancellation notification to cancel remotely. |
-| Truncated search/body | Narrow search filters; maximum 50 results and 32,000 text characters. There is no pagination or limit bypass. |
+| Truncated search/body | Search: follow `nextCursor` with the same filters until null, at most 50 summaries per call. Body: the 32,000-character cap still applies. |
 | `oversized`, `unsupported`, `missing`, `malformed` | Inspect status and metadata. Selected bodies over 1 MiB are not fetched; malformed or unavailable bodies stay metadata-only. Attachment content and alternate-body fallback to evade limits are unsupported. |
 | `protocol_failure` / read-only rejection | If broad discovery exceeds 4,096 permitted folders, narrow the folder policy; no partial list is returned. For protocol/read-only failures, stop live testing and reproduce with synthetic fixtures. Do not enable SELECT/read-write, remove PEEK, or weaken TLS to work around Bridge behavior. |
 | Live state comparison failed | Stop other clients/rules, inspect fixtures locally using read-only access, and investigate changes. Never reset the baseline silently or clean up flagged messages with this suite. |

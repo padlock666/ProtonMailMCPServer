@@ -10,8 +10,9 @@ using AppSummary = ProtonMailMcp.Contracts.MessageSummary;
 
 namespace ProtonMailMcp.Mail;
 
-internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox, IDisposable
+internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec? cursorCodec = null) : IReadOnlyMailbox, IDisposable
 {
+    private readonly SearchCursorCodec cursors = cursorCodec ?? new SearchCursorCodec();
     private readonly SemaphoreSlim gate = new(1, 1);
     private const int MaxFolderResults = 4096;
     // Internal test seam for deterministic short deadline fixtures; production always uses 30 seconds.
@@ -73,18 +74,33 @@ internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox
         ArgumentNullException.ThrowIfNull(request);
         ValidateFolder(request.Folder);
         var query = BuildQuery(request);
+        var position = request.Cursor is null ? (SearchCursorCodec.Position?)null : cursors.Decode(request.Cursor, request);
         return ExecuteAsync(async (client, token) =>
         {
             var folder = await OpenAsync(client, request.Folder, token);
+            if (folder.UidValidity == 0) throw new MailboxException(MailboxError.ProtocolFailure);
+            if (position is { } cursor)
+            {
+                if (folder.UidValidity != cursor.UidValidity) throw new MailboxException(MailboxError.StaleReference);
+                if (cursor.BeforeUid == 1) return new SearchResult([], false);
+                query = query.And(SearchQuery.Uids(new UniqueIdRange(cursor.UidValidity, 1, cursor.BeforeUid - 1)));
+            }
             var matches = await folder.SearchAsync(query, token);
-            var uids = matches.OrderByDescending(uid => uid.Id).Take(request.Limit).ToArray();
+            if (matches.Any(uid => !uid.IsValid || position is { } p && uid.Id >= p.BeforeUid))
+                throw new MailboxException(MailboxError.ProtocolFailure);
+            var candidates = matches.DistinctBy(uid => uid.Id).OrderByDescending(uid => uid.Id)
+                .Take(request.Limit + 1).ToArray();
+            var uids = candidates.Take(request.Limit).ToArray();
             if (uids.Length == 0) return new SearchResult([], false);
             var summaries = await folder.FetchAsync(uids, SummaryItems, token);
             var requested = uids.Select(uid => uid.Id).ToHashSet();
             var results = summaries.Where(summary => requested.Contains(summary.UniqueId.Id))
+                .DistinctBy(summary => summary.UniqueId.Id)
                 .OrderByDescending(summary => summary.UniqueId.Id)
                 .Take(request.Limit).Select(summary => MapSummary(folder, summary)).ToArray();
-            return new SearchResult(Array.AsReadOnly(results), matches.Count > request.Limit);
+            var next = candidates.Length > request.Limit
+                ? cursors.Encode(request, folder.UidValidity, uids[^1].Id) : null;
+            return new SearchResult(Array.AsReadOnly(results), next is not null, next);
         }, cancellationToken);
     }
 
@@ -155,6 +171,8 @@ internal sealed class MailKitMailbox(BridgeSettings settings) : IReadOnlyMailbox
             throw new MailboxException(MailboxError.FolderUnavailable);
         // Recheck the resolved name as well as the caller's name.
         if (!settings.IsFolderAllowed(folder.FullName)) throw new MailboxException(MailboxError.DeniedFolder);
+        if (SearchCursorCodec.NormalizeFolder(name) != SearchCursorCodec.NormalizeFolder(folder.FullName))
+            throw new MailboxException(MailboxError.ProtocolFailure);
         await folder.OpenAsync(FolderAccess.ReadOnly, token);
         if (folder.Access != FolderAccess.ReadOnly) throw new MailboxException(MailboxError.ProtocolFailure);
         return folder;

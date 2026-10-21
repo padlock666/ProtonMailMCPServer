@@ -21,7 +21,7 @@ Stdio limits exposure to the parent/child process relationship; it is not a sand
 | Credentials/content disclosed or trust settings replaced | External owner-only password, configuration, and pin files with private parents and trusted ancestors; sanitized stderr/errors | Permission/path tests and captured output tests |
 | Email contains malicious instructions or HTML | Treat content as data; text conversion only; no network/render/execute | MIME and external-reference fixtures |
 | Oversized content exhausts resources | Transfer/body/result caps and 30-second deadline | Oversize and cancellation fixtures |
-| UID reused after folder reset | Compare UIDVALIDITY before every message read | Stale-reference tests |
+| UID reused after folder reset | Compare UIDVALIDITY before every message read and continuation search | Stale-reference tests |
 
 ## Read-only enforcement
 
@@ -62,7 +62,9 @@ Production logs may contain operation name, correlation ID, duration, and saniti
 
 ## Resource limits and untrusted content
 
-Maximum folder results: 4,096, with control-free full names of at most 1,024 characters; exceeding the count fails without partial output. MailKit namespace metadata parsing is not promised constant-memory. Maximum search results: 50, default 20. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
+Search [pagination](docs/SEARCH-PAGINATION.md) applies these controls on every page. The server validates fixed-length, query-bound HMAC cursors before connecting, rechecks the configured folder policy, and rejects stale folder epochs before search/fetch. A random process-lifetime key authenticates cursors; no issued-token registry, search cache, or persistent key is retained. Restart invalidates cursors. Tokens are authenticated rather than encrypted and contain decodable UID metadata; exclude cursors, keys, and decoded fields from logs/errors. Cursor possession never grants folder access. Synthetic tests establish protocol behavior; live pagination/flag preservation remains unverified.
+
+Maximum folder results: 4,096, with control-free full names of at most 1,024 characters; exceeding the count fails without partial output. MailKit namespace metadata parsing is not promised constant-memory. Maximum search results per page: 50, default 20; cursor input is exactly 98 canonical base64url ASCII characters when supplied. Each page may still materialize all matching UIDs in its remaining range; pagination does not promise constant-memory search. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
 
 Do not buffer an entire message or attachment to enforce a body-only limit afterward. Bound MIME/conversion work and return explicit metadata-only content status if the selected body cannot be read safely. Keep failures distinct from successful empty searches.
 

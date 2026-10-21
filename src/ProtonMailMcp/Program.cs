@@ -26,6 +26,7 @@ try
     // Application diagnostics are fixed codes written directly to stderr below.
     builder.Logging.AddFilter(_ => false);
     builder.Services.AddSingleton(settings);
+    builder.Services.AddSingleton<SearchCursorCodec>();
     builder.Services.AddSingleton<IReadOnlyMailbox, MailKitMailbox>();
     builder.Services.AddMcpServer(options =>
     {

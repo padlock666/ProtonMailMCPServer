@@ -118,6 +118,20 @@ public sealed class LiveAcceptance
                         ((m.Flags & (int)MessageFlags.Seen) == 0) == unread).Select(m => m.Uid).OrderDescending();
                     LiveManifest.Require(!found.Truncated && found.Messages.Select(m => m.Reference.Uid).SequenceEqual(expected) &&
                         found.Messages.All(m => m.Reference.UidValidity == manifest.UidValidity), "search_mismatch");
+                    var paged = new List<uint>();
+                    var pages = 0;
+                    string? cursor = null;
+                    do
+                    {
+                        LiveManifest.Require(++pages <= manifest.Messages.Length + 1, "pagination_mismatch");
+                        var page = await mailbox.SearchAsync(new(manifest.Folder, Unread: unread, Limit: 1, Cursor: cursor), token);
+                        LiveManifest.Require(page.Truncated == (page.NextCursor is not null) && page.Messages.Count <= 1 &&
+                            page.Messages.All(m => m.Reference.UidValidity == manifest.UidValidity), "pagination_mismatch");
+                        paged.AddRange(page.Messages.Select(m => m.Reference.Uid));
+                        LiveManifest.Require(paged.Count <= manifest.Messages.Length, "pagination_mismatch");
+                        cursor = page.NextCursor;
+                    } while (cursor is not null);
+                    LiveManifest.Require(paged.SequenceEqual(expected), "pagination_mismatch");
                 }
                 foreach (var fixture in manifest.Messages)
                 {

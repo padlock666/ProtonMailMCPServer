@@ -42,6 +42,8 @@ These settings apply to the coding assistant used to develop the server. Select 
 
 Proceed one implementation phase at a time; Phase 4 live acceptance remains pending explicit authorization and configuration. Review each phase's changes and acceptance evidence in `PLAN.md` before beginning the next phase. Keep live Bridge validation in Phase 4, after the protocol tests pass.
 
+Search pagination (authorized 2026-10-21) adds optional `cursor` and nullable `nextCursor` to `search_messages`. Follow [the pagination contract](SEARCH-PAGINATION.md) and [usage workflow](USAGE.md#tool-inputs-and-results). The codec is an in-memory singleton; no configuration, package, or launch changes are needed. Unit/protocol/MCP regressions use synthetic fixtures, while the extended live read stage remains explicit opt-in.
+
 ## Toolchain and layout
 
 Use .NET 10, VS Code C# tooling, Generic Host, the official `ModelContextProtocol` package, MailKit/MimeKit, and xUnit. Use one root `ProtonMailMcp.slnx`, `src/ProtonMailMcp`, and `tests/ProtonMailMcp.Tests`. Do not add a web host, database, container, service installer, or extra projects for the MVP.

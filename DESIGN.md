@@ -2,6 +2,8 @@
 
 Status: approved by the project owner on 2026-10-17; Phases 1–3 implemented with synthetic evidence. The mailbox adapter and MCP contracts are implemented; live Bridge acceptance remains Phase 4. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
 
+Owner-requested extension (2026-10-21): [message search pagination](docs/SEARCH-PAGINATION.md) implements forward cursors, query/UIDVALIDITY binding, mailbox-change semantics, and regression requirements. Live Bridge pagination acceptance remains pending; see PLAN for synthetic evidence.
+
 ## Goals and scope
 
 Allow a trusted local MCP client to discover permitted folders, search message summaries, and retrieve a message's text without changing mailbox content or persistent flags.
@@ -50,7 +52,7 @@ No arguments. Return existing, selectable folders permitted by the configured po
 
 ### `search_messages`
 
-Required input: folder full name. Optional inputs: sender substring, recipient substring, subject substring, sent-date start, sent-date end, unread status, and limit.
+Required input: folder full name. Optional inputs: sender substring, recipient substring, subject substring, sent-date start, sent-date end, unread status, limit, and cursor.
 
 - Combine supplied filters with AND. Use MailKit's typed search builders, never raw caller-supplied IMAP syntax.
 - Recipient filtering covers To and Cc. Bcc is not a reliable search target for received mail.
@@ -58,7 +60,7 @@ Required input: folder full name. Optional inputs: sender substring, recipient s
 - Unread omitted means either status; true means unseen; false means seen. Reading this flag must not change it.
 - Default limit is 20; valid limits are 1 through 50. Reject invalid values rather than silently broadening a query.
 - Return highest UIDs first within the selected folder. This ordering is not a guarantee of chronology by sender date.
-- Return summaries and `truncated: true` when additional matches exist. There is no pagination or cross-folder search in the MVP; the caller narrows filters when results are truncated.
+- Return summaries and a nullable `nextCursor`; `truncated` is true exactly when a cursor is returned. Repeat the same folder/filters and supply the cursor for the next page; the page size may change. Stop on a null cursor, including after short/empty pages caused by disappearing messages. Cursors bind the query, folder epoch, and exclusive UID boundary, and become invalid after server restart. There is no cross-folder search; [pagination details](docs/SEARCH-PAGINATION.md) define format, errors, race behavior, and compatibility.
 - An unfiltered search is permitted and returns the highest matching UIDs within the limit.
 
 Each summary includes folder, UIDVALIDITY, UID, From, To/Cc, subject, sender date when available, IMAP internal date, seen status, and reported message size. Preserve absent/malformed optional metadata as absent rather than inventing values.
@@ -122,7 +124,7 @@ Use stderr for operation name, duration, outcome, and correlation ID. Stdout is 
 | One connection per operation | Simple ownership, cleanup, and recovery | Repeated TLS/authentication overhead |
 | Serialized calls | Avoid shared IMAP state/concurrency hazards | No parallel mailbox throughput |
 | No persistent cache | Minimize retained plaintext and invalidation logic | Repeated IMAP work |
-| Top-N UID search, no pagination | Minimal search interface | Narrowing required; IMAP may still return many matching UIDs internally |
+| Forward pagination by descending UID | Traverse matches without offsets or retained result sets | Cursors expire on restart; IMAP may still return many matching UIDs internally; pages are not a snapshot |
 | Text and metadata only | Small, useful reading surface | No attachment content or full fidelity HTML |
 | Exact certificate pin | Trust the specific local Bridge instance | Manual update when the certificate changes |
 | Protocol plus live tests | Verify commands and Bridge behavior | Live compatibility must be checked separately |

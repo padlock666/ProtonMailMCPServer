@@ -51,9 +51,17 @@ public sealed class ToolTests
         }
         var search = tools.Single(t => t.Name == "search_messages").ProtocolTool;
         Assert.Equal(new[] { "folder" }, search.InputSchema.GetProperty("required").EnumerateArray().Select(x => x.GetString()));
-        Assert.Equal(new[] { "folder", "limit", "recipient", "sender", "sentEnd", "sentStart", "subject", "unread" },
+        Assert.Equal(new[] { "cursor", "folder", "limit", "recipient", "sender", "sentEnd", "sentStart", "subject", "unread" },
             search.InputSchema.GetProperty("properties").EnumerateObject().Select(x => x.Name).Order());
         Assert.Equal(20, search.InputSchema.GetProperty("properties").GetProperty("limit").GetProperty("default").GetInt32());
+        var cursorSchema = search.InputSchema.GetProperty("properties").GetProperty("cursor");
+        Assert.Equal(98, cursorSchema.GetProperty("minLength").GetInt32());
+        Assert.Equal(98, cursorSchema.GetProperty("maxLength").GetInt32());
+        Assert.Equal(new[] { "string", "null" }, cursorSchema.GetProperty("type").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(new[] { "messages", "nextCursor", "truncated" },
+            search.OutputSchema!.Value.GetProperty("properties").EnumerateObject().Select(x => x.Name).Order());
+        Assert.Equal(new[] { "string", "null" }, search.OutputSchema.Value.GetProperty("properties").GetProperty("nextCursor")
+            .GetProperty("type").EnumerateArray().Select(x => x.GetString()));
         var get = tools.Single(t => t.Name == "get_message").ProtocolTool;
         Assert.Equal(new[] { "folder", "uid", "uidValidity" }, get.InputSchema.GetProperty("required").EnumerateArray().Select(x => x.GetString()).Order());
         Assert.Equal(new[] { "attachments", "attachmentsTruncated", "contentStatus", "summary", "text", "truncated" },
@@ -154,6 +162,9 @@ public sealed class ToolTests
     }
 
     [Theory]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"cursor\":\"\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"cursor\":\"SYNTHETIC-cursor-sentinel\"}", "invalid_input")]
+    [InlineData("search_messages", "{\"folder\":\"INBOX\",\"cursor\":42}", "invalid_input")]
     [InlineData("list_folders", "{\"extra\":\"SYNTHETIC-input-sentinel\"}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedStart\":\"2025-04-01\"}", "invalid_input")]
     [InlineData("search_messages", "{\"folder\":\"INBOX\",\"receivedEnd\":\"2025-04-02\"}", "invalid_input")]
@@ -310,6 +321,53 @@ public sealed class ToolTests
         await using var host = await ClientHost.StartAsync(server);
         await server.DisposeAsync();
         Error(await host.Client.CallToolAsync("list_folders"), "bridge_unavailable");
+    }
+
+    [Fact]
+    public async Task SearchPaginationTraversesEmptyPageAndRejectsChangedFiltersStaleEpochAndRestart()
+    {
+        const string search = "UID SEARCH SUBJECT needle";
+        const string envelope = " ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL))\r\n";
+        await using var server = new ScriptedImapServer(
+            new Session(Login(Examine(), new(search, "* SEARCH 10 30 50 70 90\r\n{tag} OK found\r\n"),
+                new(@"UID FETCH 90,70 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", "{tag} OK vanished\r\n"), Logout())),
+            new Session(Login(Examine(), new(search + " UID 1:69", "* SEARCH 10 30 50\r\n{tag} OK found\r\n"),
+                new(@"UID FETCH 50 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", "* 1 FETCH (UID 50" + envelope + "{tag} OK fetched\r\n"), Logout())),
+            new Session(Login(Examine(), new(search + " UID 1:49", "* SEARCH 10 30\r\n{tag} OK found\r\n"),
+                new(@"UID FETCH 30,10 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)",
+                    "* 1 FETCH (UID 10" + envelope + "* 2 FETCH (UID 30" + envelope + "{tag} OK fetched\r\n"), Logout())),
+            new Session(Login(Examine(validity: 8))));
+        string token;
+        await using (var host = await ClientHost.StartAsync(server))
+        {
+            var args = new Dictionary<string, object?> { ["folder"] = "INBOX", ["subject"] = "needle", ["limit"] = 2, ["cursor"] = null };
+            var first = Data(await host.Client.CallToolAsync("search_messages", args));
+            Assert.Empty(first.GetProperty("messages").EnumerateArray());
+            Assert.True(first.GetProperty("truncated").GetBoolean());
+            token = first.GetProperty("nextCursor").GetString()!;
+            args["cursor"] = token;
+            args["subject"] = "other";
+            Error(await host.Client.CallToolAsync("search_messages", args), "invalid_input");
+            args["subject"] = "needle"; args["folder"] = "Private";
+            Error(await host.Client.CallToolAsync("search_messages", args), "denied_folder");
+            Assert.Equal(1, server.AcceptedConnections);
+            args["folder"] = "inbox"; args["limit"] = 1;
+            var second = Data(await host.Client.CallToolAsync("search_messages", args));
+            Assert.Equal(50u, Assert.Single(second.GetProperty("messages").EnumerateArray()).GetProperty("reference").GetProperty("uid").GetUInt32());
+            Assert.True(second.GetProperty("truncated").GetBoolean());
+            args["cursor"] = second.GetProperty("nextCursor").GetString(); args.Remove("limit");
+            var last = Data(await host.Client.CallToolAsync("search_messages", args));
+            Assert.Equal(new uint[] { 30, 10 }, last.GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("reference").GetProperty("uid").GetUInt32()));
+            Assert.False(last.GetProperty("truncated").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, last.GetProperty("nextCursor").ValueKind);
+            args["cursor"] = token;
+            Error(await host.Client.CallToolAsync("search_messages", args), "stale_reference");
+        }
+        await using (var restarted = await ClientHost.StartAsync(server))
+            Error(await restarted.Client.CallToolAsync("search_messages", new Dictionary<string, object?>
+                { ["folder"] = "INBOX", ["subject"] = "needle", ["cursor"] = token }), "invalid_input");
+        Assert.Equal(4, server.AcceptedConnections);
+        await server.VerifyAsync();
     }
 
     private sealed class ClientHost : IAsyncDisposable

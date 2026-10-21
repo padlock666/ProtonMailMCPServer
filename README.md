@@ -14,7 +14,7 @@ Start with the [configuration guide](docs/CONFIGURATION.md) for external setting
 - One trusted local client, one Bridge account, and MCP over stdio.
 - A narrow folder allowlist, initially `INBOX`, or explicit `AllExcept` access for all folders and labels with optional exclusions.
 - Three tools: `list_folders`, `search_messages`, and `get_message`.
-- Header/date/unread searches, text bodies, and attachment metadata.
+- Header/date/unread searches with cursor pagination, text bodies, and attachment metadata.
 - No sending, deleting, moving, copying, modifying, expunging, or marking messages as read.
 
 There is no HTTP service, body search, attachment download, background synchronization, or persistent mail cache in the MVP.
@@ -28,6 +28,7 @@ There is no HTTP service, body search, attachment download, background synchroni
 | [Usage guide](docs/USAGE.md) | Build/verification, stdio launch, current capabilities, and troubleshooting |
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
+| [Search pagination](docs/SEARCH-PAGINATION.md) | Implemented search cursors, mailbox-change behavior, and acceptance criteria; live verification pending |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
 | [BACKLOG.md](BACKLOG.md) | Requested future features and proposals awaiting implementation scope |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and mandatory safety controls |

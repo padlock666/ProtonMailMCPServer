@@ -2,12 +2,12 @@ namespace ProtonMailMcp.Contracts;
 
 internal sealed record SearchRequest(string Folder, string? Sender = null, string? Recipient = null,
     string? Subject = null, DateOnly? SentStart = null, DateOnly? SentEnd = null,
-    bool? Unread = null, int Limit = 20);
+    bool? Unread = null, int Limit = 20, string? Cursor = null);
 internal sealed record MessageReference(string Folder, uint UidValidity, uint Uid);
 internal sealed record FolderResult(string Name);
 internal sealed record MessageSummary(MessageReference Reference, string? From, string? To, string? Cc,
     string? Subject, DateTimeOffset? SenderDate, DateTimeOffset? InternalDate, bool? Seen, uint? Size);
-internal sealed record SearchResult(IReadOnlyList<MessageSummary> Messages, bool Truncated);
+internal sealed record SearchResult(IReadOnlyList<MessageSummary> Messages, bool Truncated, string? NextCursor = null);
 internal sealed record AttachmentMetadata(string? Filename, string MimeType, uint Size);
 internal enum ContentStatus { Available, Missing, Unsupported, Oversized, Malformed }
 internal sealed record MessageResult(MessageSummary Summary, string? Text, ContentStatus ContentStatus,
