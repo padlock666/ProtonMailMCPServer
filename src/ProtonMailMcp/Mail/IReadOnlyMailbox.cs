@@ -7,4 +7,5 @@ internal interface IReadOnlyMailbox
     Task<IReadOnlyList<FolderResult>> ListFoldersAsync(CancellationToken cancellationToken);
     Task<SearchResult> SearchAsync(SearchRequest request, CancellationToken cancellationToken);
     Task<MessageResult> GetMessageAsync(MessageReference reference, CancellationToken cancellationToken);
+    Task<AttachmentDownload> DownloadAttachmentAsync(AttachmentRequest request, CancellationToken cancellationToken);
 }

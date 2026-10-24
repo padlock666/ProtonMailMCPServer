@@ -69,18 +69,28 @@ public sealed class HostTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ToolTrafficIsProtocolOnlyAndEofDisposesActiveSession(bool inFlight)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ToolTrafficIsProtocolOnlyAndEofDisposesActiveSession(bool inFlight, bool download)
     {
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new ScriptedImapServer(new ScriptedImapServer.Session(ScriptedImapServer.Login(
-            inFlight ? new ScriptedImapServer.Step("LOGOUT", WaitForDisconnect: true, Reached: reached) : ScriptedImapServer.Logout())));
+        var steps = new List<ScriptedImapServer.Step>();
+        if (download)
+        {
+            steps.Add(ScriptedImapServer.Examine());
+            steps.Add(ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Structure(ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Pdf(4)));
+            steps.Add(ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Payload("YQ=="));
+        }
+        steps.Add(inFlight ? new ScriptedImapServer.Step("LOGOUT", WaitForDisconnect: true, Reached: reached) : ScriptedImapServer.Logout());
+        await using var server = new ScriptedImapServer(new ScriptedImapServer.Session(ScriptedImapServer.Login(steps.ToArray())));
         using var fixture = new SyntheticConfiguration();
         fixture.Values["Port"] = server.Port;
         fixture.Values["TlsMode"] = "SslOnConnect";
         fixture.Values["AllowedFolders"] = new[] { "INBOX" };
         File.WriteAllBytes(fixture.CertificatePath, server.CertificateDer);
+        var downloadPath = download ? fixture.EnableDownloads() : null;
         fixture.Save();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         using var process = Start(["--config", fixture.ConfigPath]);
@@ -95,16 +105,18 @@ public sealed class HostTests
             await process.StandardInput.WriteLineAsync("""
                 {"jsonrpc":"2.0","method":"notifications/initialized"}
                 """);
-            await process.StandardInput.WriteLineAsync("""
-                {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_folders","arguments":{}}}
-                """);
+            await process.StandardInput.WriteLineAsync(download ?
+                """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"download_attachment","arguments":{"folder":"INBOX","uidValidity":7,"uid":42,"attachmentId":"1"}}}""" :
+                """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_folders","arguments":{}}}""");
             await process.StandardInput.FlushAsync(timeout.Token);
             if (inFlight) await reached.Task.WaitAsync(timeout.Token);
             else
             {
                 using var response = JsonDocument.Parse((await process.StandardOutput.ReadLineAsync(timeout.Token))!);
                 Assert.Equal(2, response.RootElement.GetProperty("id").GetInt32());
-                Assert.Equal("INBOX", response.RootElement.GetProperty("result").GetProperty("structuredContent").GetProperty("folders")[0].GetProperty("name").GetString());
+                var data = response.RootElement.GetProperty("result").GetProperty("structuredContent");
+                if (download) Assert.Equal("a", await File.ReadAllTextAsync(data.GetProperty("path").GetString()!));
+                else Assert.Equal("INBOX", data.GetProperty("folders")[0].GetProperty("name").GetString());
             }
             process.StandardInput.Close();
             var rest = await process.StandardOutput.ReadToEndAsync(timeout.Token);
@@ -120,6 +132,7 @@ public sealed class HostTests
             Assert.DoesNotContain(SyntheticConfiguration.SentinelUsername, diagnostics);
             Assert.DoesNotContain("INBOX", diagnostics);
             Assert.DoesNotContain(fixture.DirectoryPath, diagnostics);
+            if (download) Assert.Equal(inFlight ? 0 : 1, Directory.GetFiles(downloadPath!).Length);
             await server.VerifyAsync();
         }
         finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
@@ -132,6 +145,8 @@ public sealed class HostTests
     [InlineData("writable-config")]
     [InlineData("writable-certificate")]
     [InlineData("ambiguous-folder-policy")]
+    [InlineData("download-directory-unsafe")]
+    [InlineData("download-directory-in-use")]
     public async Task StartupFailureIsSanitizedAndStderrOnly(string scenario)
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
@@ -153,6 +168,13 @@ public sealed class HostTests
             File.SetUnixFileMode(fixture.ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
         if (scenario == "writable-certificate")
             File.SetUnixFileMode(fixture.CertificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
+        using var lockStore = scenario == "download-directory-in-use" ?
+            new ProtonMailMcp.Mail.PrivateDownloadStore(fixture.EnableDownloads()) : null;
+        if (scenario == "download-directory-unsafe")
+        {
+            var downloadDirectory = fixture.EnableDownloads();
+            File.SetUnixFileMode(downloadDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupExecute);
+        }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var process = Start(arguments);
         try

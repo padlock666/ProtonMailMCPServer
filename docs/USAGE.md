@@ -1,10 +1,12 @@
 # Usage guide
 
-The server exposes exactly three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. A manual real Bridge smoke test succeeded on 2026-10-18 for initialization, discovery, folder listing, and date-range search; full live acceptance and version-specific compatibility remain pending. See [PLAN.md](../PLAN.md).
+Optional [attachment downloads](ATTACHMENT-DOWNLOADS.md) save original bytes into a configured private directory and return paths for the local client's document tools. Enable them with [AttachmentDownloads.Directory](CONFIGURATION.md#optional-attachment-downloads).
+
+By default the server exposes three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. A manual real Bridge smoke test succeeded on 2026-10-18 for initialization, discovery, folder listing, and date-range search; full live acceptance and version-specific compatibility remain pending. See [PLAN.md](../PLAN.md).
 
 ## Build and verify
 
-Use Linux and the .NET SDK pinned in `global.json` (currently 10.0.112, with roll-forward disabled). From the repository root:
+Use Linux and the .NET SDK pinned in `global.json` (currently 10.0.113, with roll-forward disabled). From the repository root:
 
 ```bash
 dotnet restore ProtonMailMcp.slnx --locked-mode
@@ -13,6 +15,8 @@ dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Cate
 ```
 
 The standard suite uses synthetic configuration, TLS certificates, and ephemeral loopback IMAP fixtures. It needs no Proton account, real credentials, or running Bridge. Restore may require NuGet network access. Some restricted runners must permit MSBuild/VSTest IPC and synthetic loopback sockets; see the [testing guide](TESTING.md).
+
+If the CLI reports “A compatible .NET SDK was not found”, compare `dotnet --list-sdks` with `global.json`. Roll-forward is disabled, so even a newer installed patch does not satisfy a different exact pin. Install the pinned SDK or intentionally update the pin and verify the build/tests; see the [toolchain policy](DEVELOPMENT.md#pinned-dependencies-and-verification-sources).
 
 ## Configure the host
 
@@ -39,7 +43,7 @@ For a parent MCP client's stdio launch settings, use the following command and a
 
 The parent client owns stdin/stdout, initializes the MCP session, and closes the transport on shutdown. The process is not an interactive shell for mail commands and does not provide an HTTP endpoint. Stdout is reserved for MCP messages; capture stderr separately and do not merge it into stdout. A missing startup banner is expected. Closing stdin allows clean shutdown; an active operation may drain until its existing 30-second deadline before exit. For prompt cancellation, send an MCP cancellation notification before closing the transport.
 
-Successful initialization identifies the server as `ProtonMailMcp`. It advertises the three tools below, with read-only and non-destructive annotations, and no resources or prompts. Initialization and discovery do not connect to Bridge.
+Successful initialization identifies the server as `ProtonMailMcp`. It advertises three base tools with read-only/non-destructive annotations and the fourth `download_attachment` tool when configured; the download tool is a non-destructive local write (`readOnlyHint: false`, `idempotentHint: false`), and no resources or prompts. Initialization and discovery do not connect to Bridge.
 
 ## Mailbox functionality and limits
 
@@ -51,7 +55,7 @@ The tools call the tested adapter for permitted folder discovery, typed searches
 | Message identity | Folder full name + UIDVALIDITY + UID; stale identities are rejected |
 | Body | Primary non-attachment plain text, otherwise HTML converted to text without rendering or fetching external references |
 | Transfer/output | Selected text part at most 1 MiB; returned text at most 32,000 characters, with explicit status/truncation |
-| Attachments | Metadata only, at most 100 entries with an attachment truncation flag; no payload downloads |
+| Attachments | `get_message` returns at most 100 metadata entries/IDs and a truncation flag; configured downloads save one eligible attachment at a time |
 | Connection | One encrypted connection per operation, serialized access, 30-second deadline including queue time |
 | Safety | Read-only folder selection and PEEK; no sending, flag changes, mailbox mutation, or expunging cleanup |
 
@@ -65,6 +69,7 @@ Folder discovery returns at most 4,096 permitted folders and fails without a par
 | --- | --- | --- |
 | `list_folders` | `{}` or omitted arguments | `{"folders":[{"name":"INBOX"}]}`; only existing selectable permitted folders |
 | `search_messages` | Required `folder`; optional `sender`, `recipient`, `subject`, `sentStart`, `sentEnd`, `unread`, `limit`, `cursor` | `{"messages":[summary],"truncated":false,"nextCursor":null}` |
+| `download_attachment` (optional) | Required `folder`, `uidValidity`, `uid`, `attachmentId` | Saved absolute `path`, `reference`, `attachmentId`, `originalFilename`, `mimeType`, `reportedSize`, `sizeBytes`, `sha256` |
 | `get_message` | Required `folder`, `uidValidity`, `uid` | `{"summary":summary,"text":"...","contentStatus":"available","truncated":false,"attachments":[],"attachmentsTruncated":false}` |
 
 A summary has `reference` (`folder`, `uidValidity`, `uid`), `from`, `to`, `cc`, `subject`, `senderDate`, `internalDate`, `seen`, and `size`. Optional metadata is explicitly null when absent. Dates in results use ISO 8601 timestamps; size is reported bytes. Preserve all three reference fields from a search result when calling `get_message`; identifiers are integers from 1 through 4,294,967,295.
@@ -87,7 +92,19 @@ To continue, pass the returned `nextCursor` as `cursor` and repeat the same fold
 
 Cursors are tied to this server process, folder, filters, and UIDVALIDITY. Server restart invalidates them with `invalid_input`; changed folder epochs return `stale_reference`. Start a new search in either case. Refresh tool discovery when upgrading; requests without cursors keep their first-page behavior, but strict clients must accept the added nullable `nextCursor` output. The full [pagination contract](SEARCH-PAGINATION.md) covers cursor lifetime and mailbox-change behavior. Live Bridge pagination remains unverified.
 
-`contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, and reported `size`. Filenames are data and must never be treated as paths. No attachment payload is returned.
+`contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, reported `size` and nullable `attachmentId`. IDs are available for eligible parts when downloads are configured. Filenames are data and must never be treated as paths. `get_message` never returns or fetches attachment payloads.
+
+To download a PDF, preserve the message reference and use its non-null attachment ID:
+
+```json
+{"folder":"INBOX","uidValidity":7,"uid":42,"attachmentId":"2"}
+```
+
+Call `download_attachment` with that object. It returns the generated absolute path, sanitized original filename, declared MIME type, server-reported encoded size, exact decoded size and SHA-256. Pass the path to a client tool that can read PDFs on the same filesystem. The server performs MIME transfer decoding only; it does not read PDF text, perform OCR, unlock encrypted PDFs, execute files or fetch links. Attached messages, multipart containers and inline-only body parts are excluded. MIME types/extensions remain untrusted claims. Other eligible binary files are saved as `.bin`; declared PDFs as `.pdf`.
+
+Each success creates a distinct private file retained until operator cleanup, even on repeated requests. There is no overwrite or caller-selected destination. Limits are 36 MiB encoded and 25 MiB decoded, with directory quota 250 MiB/1,000 entries and the existing 30-second deadline. Errors/cancellation before publication attempt to remove only that operation's incomplete file. A process crash can leave private `.part` files; cancellation or lost responses around atomic publication can leave completed files. Do not blindly retry expecting deduplication. The server never automatically deletes completed files.
+
+Download errors include `attachment_not_found`, `attachment_unsupported`, `attachment_too_large`, `attachment_malformed`, `download_directory_unsafe`, `download_limit_exceeded`, `download_storage_failed` and `download_cleanup_failed`. They return no path or content. See [exact meanings and reference validation](ATTACHMENT-DOWNLOADS.md#errors). Client PDF interpretation and live Bridge download acceptance remain pending; synthetic SDK/file handoff verifies transport and bytes only.
 
 Successes populate MCP `structuredContent` and a text content block containing the same JSON for compatible clients. Tool execution failures set `isError: true`, omit structured content, and return one text block containing only the fixed code below. They never masquerade as empty successful results. Received MCP cancellation notifications cancel the adapter operation and release its connection. With the pinned SDK in this environment, cancelling a high-level client call’s local token did not reliably deliver remote cancellation; a cancelled local await alone is not evidence of server cleanup. The process regression explicitly sends and awaits `notifications/cancelled` for a known request ID using `McpClient.SendMessageAsync`. See the [test evidence](TESTING.md#phase-3-coverage-and-limitations) and [explicit cancellation example in the process tests](../tests/ProtonMailMcp.Tests/Mcp/ToolTests.cs).
 
@@ -187,7 +204,7 @@ In VS Code, use **MCP: Add Server** and choose a stdio command. Prefer user-prof
 }
 ```
 
-Review the client's trust prompt and model/data policy before enabling tools. Use **MCP: List Servers** to start/stop/restart the process and inspect sanitized stderr. Discovery should show exactly the three tools. Restart after changing configuration, credentials, or pins. A client tool call can access real mail; do not test it with personal settings before authorization. Never use `dotnet run` as the MCP transport command or merge stderr into stdout.
+Review the client's trust prompt and model/data policy before enabling tools. Use **MCP: List Servers** to start/stop/restart the process and inspect sanitized stderr. Discovery should show three base tools, plus `download_attachment` only when configured. Restart after changing configuration, credentials, or pins. A client tool call can access real mail; do not test it with personal settings before authorization. Never use `dotnet run` as the MCP transport command or merge stderr into stdout.
 
 ## Runtime troubleshooting
 
@@ -201,7 +218,7 @@ Review the client's trust prompt and model/data policy before enabling tools. Us
 | `message_not_found` | A message disappeared or the identity is wrong. Search again; never substitute sequence number or Message-ID. |
 | `timeout` / connection lost | Check Bridge availability and competing calls. Each operation has 30 seconds including queue time. A later call uses a fresh connection. Send an MCP cancellation notification to cancel remotely. |
 | Truncated search/body | Search: follow `nextCursor` with the same filters until null, at most 50 summaries per call. Body: the 32,000-character cap still applies. |
-| `oversized`, `unsupported`, `missing`, `malformed` | Inspect status and metadata. Selected bodies over 1 MiB are not fetched; malformed or unavailable bodies stay metadata-only. Attachment content and alternate-body fallback to evade limits are unsupported. |
+| `oversized`, `unsupported`, `missing`, `malformed` | Inspect status and metadata. Selected bodies over 1 MiB are not fetched; malformed or unavailable bodies stay metadata-only. Use the explicit configured download tool for attachments; `get_message` does not fetch attachment content or alternate bodies to evade limits. |
 | `protocol_failure` / read-only rejection | If broad discovery exceeds 4,096 permitted folders, narrow the folder policy; no partial list is returned. For protocol/read-only failures, stop live testing and reproduce with synthetic fixtures. Do not enable SELECT/read-write, remove PEEK, or weaken TLS to work around Bridge behavior. |
 | Live state comparison failed | Stop other clients/rules, inspect fixtures locally using read-only access, and investigate changes. Never reset the baseline silently or clean up flagged messages with this suite. |
 

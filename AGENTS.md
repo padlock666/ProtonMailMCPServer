@@ -6,6 +6,8 @@ Build a small, read-only Proton Mail MCP server for Linux using C#/.NET 10, the 
 
 The design is approved. See `PLAN.md` for implemented phases and the next authorized scope. A plan alone does not authorize implementation of later phases. Once implementation is requested, carry out the authorized scope without repeatedly asking for routine implementation approval.
 
+The attachment-download extension was authorized on 2026-10-21; see `docs/ATTACHMENT-DOWNLOADS.md` for its private-storage, retention and verification requirements.
+
 ## Read before working
 
 1. Read [PLAN.md](PLAN.md) for current status, requested phase, and acceptance criteria.
@@ -32,10 +34,10 @@ Keep these documents consistent with actual behavior. Treat implementation tasks
 - Use asynchronous I/O and pass cancellation tokens through every mailbox operation. Serialize mailbox calls; create/dispose one IMAP connection per operation.
 - Use dependency injection for dependencies that need substitution. Do not wrap every SDK type or introduce a generic repository, mediator, database, or web host.
 - Keep MailKit objects inside the adapter. MCP tools consume application DTOs and return bounded, sanitized results.
-- Explicitly register the three approved tools. Do not add prompts, resources, or additional tools opportunistically.
+- Explicitly register the three base tools and the optional configured `download_attachment` tool. Do not add prompts, resources, or additional tools opportunistically.
 - Enable nullable reference types and use clear, idiomatic C#. Prefer small methods, immutable result types, and explicit input validation.
 - Use reviewed, exact package versions and commit NuGet lock files when projects are created. Record chosen SDK/package versions; do not guess current SDK APIs from old examples.
-- Do not add HTTP hosting, attachment downloads, body search, persistent caching, background sync, multi-account support, or direct Proton API access without a scope change.
+- Do not add HTTP hosting, attachment processing beyond the approved download contract, body search, persistent caching, background sync, multi-account support, or direct Proton API access without a scope change.
 
 ## Verification and completion
 

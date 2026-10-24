@@ -42,6 +42,16 @@ internal static class ConfigurationLoader
             var (folderMode, allowedFolders, excludedFolders) = ReadFolderAccess(document, json.RootElement);
             RequireAbsolutePath(document.CertificateFile);
             RequireAbsolutePath(document.PasswordFile);
+            string? downloadDirectory = null;
+            if (json.RootElement.TryGetProperty("AttachmentDownloads", out _))
+            {
+                downloadDirectory = document.AttachmentDownloads?.Directory;
+                LinuxProtectedFile.ValidateDownloadPath(downloadDirectory);
+                foreach (var protectedPath in new[] { path, document.PasswordFile!, document.CertificateFile! })
+                    if (Path.GetFullPath(protectedPath).StartsWith(downloadDirectory + "/", StringComparison.Ordinal))
+                        throw new ConfigurationException("configuration_download_directory_unsafe");
+                using var directory = LinuxProtectedFile.OpenDownloadDirectory(downloadDirectory!);
+            }
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
             await using var secret = LinuxProtectedFile.Open(document.PasswordFile!);
             var password = new UTF8Encoding(false, true).GetString(await ReadBoundedAsync(secret, 4096, cancellationToken));
@@ -51,7 +61,7 @@ internal static class ConfigurationLoader
             if (string.IsNullOrWhiteSpace(password) || password.Any(char.IsControl))
                 throw new ConfigurationException("configuration_password_invalid");
             return new BridgeSettings(host, document.Port, tlsMode, document.Username, password,
-                certificateDer, allowedFolders, folderMode, excludedFolders);
+                certificateDer, allowedFolders, folderMode, excludedFolders, downloadDirectory);
         }
         catch (OperationCanceledException) { throw; }
         catch (ConfigurationException) { throw; }

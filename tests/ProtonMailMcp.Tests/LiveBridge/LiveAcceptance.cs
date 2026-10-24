@@ -34,6 +34,9 @@ internal sealed class LiveManifest
     public uint AttachmentUid { get; init; }
     public string PlainTextSha256 { get; init; } = "";
     public string HtmlTextSha256 { get; init; } = "";
+    public string? DownloadAttachmentId { get; init; }
+    public string? DownloadSha256 { get; init; }
+    public long? DownloadSizeBytes { get; init; }
 
     internal void Validate(BridgeSettings settings)
     {
@@ -79,7 +82,8 @@ public sealed class LiveAcceptance
             LiveManifest.Require(Environment.GetEnvironmentVariable("PROTONMCP_LIVE") ==
                 "I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS", "authorization_required");
             var stage = Environment.GetEnvironmentVariable("PROTONMCP_LIVE_STAGE");
-            LiveManifest.Require(stage is "reads" or "unavailable" or "recovered", "stage_required");
+            LiveManifest.Require(stage is "reads" or "unavailable" or "recovered" or "downloads", "stage_required");
+            RequireDownloadAuthorization(stage, Environment.GetEnvironmentVariable("PROTONMCP_LIVE_DOWNLOADS"));
             var configPath = ExternalPath("PROTONMCP_LIVE_CONFIG");
             var manifestPath = ExternalPath("PROTONMCP_LIVE_FIXTURES");
             using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
@@ -91,6 +95,7 @@ public sealed class LiveAcceptance
                 var config = await JsonSerializer.DeserializeAsync<ConfigurationDocument>(configFile, cancellationToken: token);
                 ExternalValue(config?.PasswordFile);
                 ExternalValue(config?.CertificateFile);
+                if (stage == "downloads") ExternalValue(config?.AttachmentDownloads?.Directory);
             }
             var settings = await ConfigurationLoader.LoadAsync(configPath, token);
             await using var file = File.OpenRead(manifestPath);
@@ -99,6 +104,26 @@ public sealed class LiveAcceptance
                 new JsonSerializerOptions { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow }, token);
             LiveManifest.Require(manifest is not null, "manifest_required");
             manifest!.Validate(settings);
+            if (stage == "downloads")
+            {
+                ValidateDownloadFixture(settings, manifest);
+                using var store = new PrivateDownloadStore(settings.DownloadDirectory!);
+                using var reader = new MailKitMailbox(settings, downloadStore: store);
+                await VerifyState(settings, manifest, token);
+                for (var repeat = 0; repeat < 2; repeat++)
+                {
+                    var downloaded = await reader.DownloadAttachmentAsync(new(
+                        new(manifest.Folder, manifest.UidValidity, manifest.AttachmentUid), manifest.DownloadAttachmentId!), token);
+                    LiveManifest.Require(downloaded.SizeBytes == manifest.DownloadSizeBytes &&
+                        string.Equals(downloaded.Sha256, manifest.DownloadSha256, StringComparison.OrdinalIgnoreCase), "download_mismatch");
+                    await using var saved = File.OpenRead(downloaded.Path);
+                    LiveManifest.Require(saved.Length == manifest.DownloadSizeBytes &&
+                        string.Equals(Convert.ToHexString(await SHA256.HashDataAsync(saved, token)),
+                            manifest.DownloadSha256, StringComparison.OrdinalIgnoreCase), "saved_download_mismatch");
+                }
+                await VerifyState(settings, manifest, token);
+                return;
+            }
             using var mailbox = new MailKitMailbox(settings);
             if (stage == "unavailable")
             {
@@ -170,6 +195,20 @@ public sealed class LiveAcceptance
             // Includes raw MailKit/JSON/filesystem failures from the test-only observer: no inner exceptions.
             throw new InvalidOperationException("Live acceptance failed; inspect setup locally. No live details are reported.");
         }
+    }
+
+    internal static void RequireDownloadAuthorization(string? stage, string? authorization)
+    {
+        LiveManifest.Require(stage != "downloads" || authorization == "I_AUTHORIZE_LOCAL_ATTACHMENT_FILES",
+            "download_authorization_required");
+    }
+
+    internal static void ValidateDownloadFixture(BridgeSettings settings, LiveManifest manifest)
+    {
+        LiveManifest.Require(settings.DownloadDirectory is not null && AttachmentParts.ValidId(manifest.DownloadAttachmentId) &&
+            manifest.DownloadSha256 is { Length: 64 } hash && hash.All(char.IsAsciiHexDigit) &&
+            manifest.DownloadSizeBytes is >= 0 and <= PrivateDownloadStore.MaxFileBytes,
+            "download_fixture_required");
     }
 
     private static BridgeSettings Copy(BridgeSettings s, string password, byte[] pin) =>

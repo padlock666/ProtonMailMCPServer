@@ -30,6 +30,16 @@ internal sealed class SyntheticConfiguration : IDisposable
         Save();
     }
 
+    public string EnableDownloads()
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        var path = Path.Combine(DirectoryPath, "downloads");
+        Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        Values["AttachmentDownloads"] = new { Directory = path };
+        Save();
+        return path;
+    }
+
     public void Save()
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");

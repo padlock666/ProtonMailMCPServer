@@ -1,6 +1,8 @@
 # Configuration guide
 
-The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract, including explicit allowlist and all-except folder policies; see the [usage guide](USAGE.md) for launching the stdio host and the three tools. Live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
+The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract, including explicit allowlist and all-except folder policies; see the [usage guide](USAGE.md) for launching the stdio host, three base tools and optional attachment-download tool. Live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
+
+Omitting `AttachmentDownloads` keeps downloads disabled and preserves the three base tools. Add the optional setting below to enable a fourth tool. The default runnable example keeps downloads disabled.
 
 ## File locations and loading
 
@@ -36,6 +38,7 @@ Copy [config.example.json](../examples/config.example.json) to a private directo
 | `PasswordFile` | Yes | Absolute path to the separate owner-only file containing the Bridge-generated IMAP password |
 | `CertificateFile` | Yes | Absolute path to the exported public Bridge certificate |
 | `FolderAccess` | Yes, unless using legacy `AllowedFolders` | Object with explicit `Mode` and the corresponding folder list; see below |
+| `AttachmentDownloads` | No | Object with one required `Directory` absolute path; omission disables downloads; null/unknown fields fail startup |
 | `AllowedFolders` | Legacy alternative | Top-level nonempty exact folder list; cannot be combined with `FolderAccess` |
 
 Use Bridge-generated IMAP credentials, not the Proton account password. Read the values from the operator-managed Bridge settings; the server does not discover credentials, log in to Bridge on your behalf, or inspect Bridge's private stores. SMTP settings are not used. Do not infer TLS mode from the port.
@@ -86,6 +89,26 @@ Supply one public X.509 certificate as PEM or DER. It must be within its validit
 Each mailbox connection requires encrypted IMAP and an exact match to the configured certificate before authentication. A self-signed certificate can be trusted through this explicit pin; a different certificate fails even if a system certificate authority trusts it. There is no plaintext fallback, trust-on-first-use, or automatic pin replacement.
 
 When Bridge's certificate changes, verify the change independently, export the replacement public certificate, update the external file or `CertificateFile` path, and restart the server. Do not disable verification to resolve a mismatch. These controls have synthetic protocol evidence; real Bridge compatibility remains unverified.
+
+## Optional attachment downloads
+
+To enable `download_attachment`, create a dedicated empty directory locally outside the checkout and settings/credential directories, set mode `0700`, and add this fragment to the external JSON settings:
+
+```json
+{
+  "AttachmentDownloads": {
+    "Directory": "/absolute/private/directory/attachments"
+  }
+}
+```
+
+The directory must already exist, be owned by the server's effective user and have exactly mode `0700`. Its path must be absolute, control-free, at most 3,000 UTF-8 bytes, with no symlink components, `.`/`..`, doubled or trailing slashes. Ancestors follow the protected-path rules above. A directory containing the loaded settings/password/certificate files is rejected. The server validates handles, takes a process-lifetime exclusive lock and refuses a second server using the same directory. This storage implementation requires 64-bit Linux and a supported local filesystem; do not use network storage. It never creates or repairs the directory.
+
+Restart after adding/removing/changing this object. Unknown/duplicate properties, null objects and absent/null directory values fail startup; omission is the only disabled form. There are no environment or caller overrides and no default download directory.
+
+Downloads use generated filenames and private `0600` files. Limits are fixed: 36 MiB encoded transfer, 25 MiB decoded file, and 250 MiB/1,000 directory entries, including incomplete files. Capacity is reserved conservatively for another full 25 MiB file. Completed files remain until you remove them; stop the server before clearing abandoned `.part` files. No automatic expiry, cleanup of completed files or overwrite is provided. Keep plaintext out of source control and unintended backup/sync locations. See [the download contract](ATTACHMENT-DOWNLOADS.md) for retention, commit/cancellation and quota details.
+
+Startup failures use fixed `configuration_attachment_downloads_invalid`, `configuration_download_directory_unsafe` or `configuration_download_directory_in_use` codes without paths. The client must be able to read the returned host path; a cloud sandbox does not automatically share this directory.
 
 ## Configuration errors
 

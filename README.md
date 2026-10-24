@@ -2,22 +2,24 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three approved tools are registered and tested through the official SDK client. An operator-performed real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. Full live acceptance remains pending. See [PLAN.md](PLAN.md) for evidence and remaining phases. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
+**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three base tools and optional attachment-download tool are registered and tested through the official SDK client. An operator-performed real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. Full live acceptance remains pending. See [PLAN.md](PLAN.md) for evidence and remaining phases. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
 
 ## Configuration and usage
 
-Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder access policies, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes the three approved read-only tools.
+Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder access policies, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes three base tools and an optional configured attachment-download tool.
 
 ## MVP
 
 - C# and .NET 10, the official MCP C# SDK, and MailKit/MimeKit.
 - One trusted local client, one Bridge account, and MCP over stdio.
 - A narrow folder allowlist, initially `INBOX`, or explicit `AllExcept` access for all folders and labels with optional exclusions.
-- Three tools: `list_folders`, `search_messages`, and `get_message`.
+- Three base tools: `list_folders`, `search_messages`, and `get_message`; optional `download_attachment` when private storage is configured.
 - Header/date/unread searches with cursor pagination, text bodies, and attachment metadata.
 - No sending, deleting, moving, copying, modifying, expunging, or marking messages as read.
 
-There is no HTTP service, body search, attachment download, background synchronization, or persistent mail cache in the MVP.
+There is no HTTP service, body search, background synchronization, or persistent mail cache.
+
+The opt-in [attachment-download tool](docs/ATTACHMENT-DOWNLOADS.md) saves original files into a configured private directory and returns paths/metadata for the local AI client's document tools. Files persist until operator cleanup; the client must be able to access that filesystem.
 
 ## Documentation
 
@@ -29,6 +31,7 @@ There is no HTTP service, body search, attachment download, background synchroni
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
 | [Search pagination](docs/SEARCH-PAGINATION.md) | Implemented search cursors, mailbox-change behavior, and acceptance criteria; live verification pending |
+| [Attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) | Implemented private-directory downloads, storage/retention rules and pending client/live acceptance |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
 | [BACKLOG.md](BACKLOG.md) | Requested future features and proposals awaiting implementation scope |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and mandatory safety controls |
@@ -39,7 +42,7 @@ Start with `AGENTS.md`, then `PLAN.md`. For an implementation task, read the lin
 
 ## Prerequisites
 
-- Linux and the .NET 10 SDK. SDK 10.0.112 is pinned in `global.json` with roll-forward disabled.
+- Linux and the .NET 10 SDK. SDK 10.0.113 is pinned in `global.json` with roll-forward disabled.
 - VS Code and suitable C# tooling; Codex is the intended coding assistant.
 - For live acceptance only: an eligible Proton subscription, a working Proton Mail Bridge installation and credential store, Bridge IMAP credentials, and its exported public TLS certificate. See [Proton's Linux requirements](https://proton.me/support/bridge-for-linux).
 

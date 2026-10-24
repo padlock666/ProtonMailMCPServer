@@ -56,7 +56,7 @@ Check the policy before connecting for search/read, and against the resolved ful
 
 `AllExcept` explicitly authorizes newly created folders and label folders automatically. Excluding a folder restricts that access path only: messages carrying an excluded label may still be returned through another permitted folder/label, including INBOX or All Mail. No message-level label confidentiality is provided. The live acceptance suite rejects `AllExcept` and still requires a single dedicated allowlisted test folder.
 
-The application has no persistent mail cache, content telemetry, mailbox exports, or attachment files. Normal .NET process memory still contains credentials and plaintext during operations; do not promise secure memory erasure or protection from same-user debugging, swap, or OS crash dumps.
+The application has no persistent mail cache, content telemetry or full-message exports. Opt-in attachment downloads retain private plaintext files until operator cleanup. Normal .NET process memory still contains credentials and plaintext during operations; do not promise secure memory erasure or protection from same-user debugging, swap, or OS crash dumps.
 
 Production logs may contain operation name, correlation ID, duration, and sanitized outcome only. Never log subjects, addresses, folder names, message identifiers, search strings, bodies, credentials, raw exceptions, or protocol transcripts. SDK/framework logging must follow the same policy. Synthetic fixture transcripts may be used in tests.
 
@@ -71,6 +71,16 @@ Do not buffer an entire message or attachment to enforce a body-only limit after
 Message text, HTML, headers, filenames, and metadata can contain prompt injection, control characters, links, and misleading instructions. They are untrusted tool data. Descriptions should state that boundary, but the server cannot enforce the downstream model's behavior. Never render HTML, retrieve remote resources, execute mail content, or use filenames as filesystem paths.
 
 ## Live testing and maintenance
+
+### Attachment-download boundary
+
+The owner requested the [attachment-download design](docs/ATTACHMENT-DOWNLOADS.md) on 2026-10-21. Implementation was authorized later the same day, adding a narrow exception to metadata-only retrieval and no local mail exports: an explicitly configured tool may save one eligible attachment as a private local file. The tool is implemented; live access remains separately authorized. All existing mailbox mutation, folder-policy, TLS, UIDVALIDITY and PEEK controls remain mandatory.
+
+Controls include an operator-prepared `0700` directory, handle-relative no-follow creation of `0600` files, generated names, no-overwrite atomic publication, fixed transfer/output/directory limits, and serialized operations. Downloads persist until operator cleanup; failed operations remove only their own incomplete files where possible. The tool must disclose this local side effect through its description and annotations. No document-format parsing/execution, remote resource retrieval, filesystem path chosen by the caller, or automatic deletion of completed files is allowed. See the linked design for exact limits, error/commit semantics, crash leftovers, storage assumptions and required evidence.
+
+Successful download results intentionally reveal the requested file's path and metadata to the trusted client. Paths, attachment identifiers, filenames and hashes must stay out of logs and errors. The live download stage requires additional explicit opt-in for local plaintext retention; the existing live read stage stays metadata-only. Client access to returned paths and real Bridge flag preservation require separate acceptance evidence.
+
+### Existing live-testing requirements
 
 Real-mail validation is explicit opt-in using externally supplied configuration and an operator-prepared folder. Standard automated tests must never auto-discover or connect to Bridge. The live suite must not send, seed, alter, or clean up mail.
 

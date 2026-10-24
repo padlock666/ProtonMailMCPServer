@@ -10,7 +10,8 @@ using AppSummary = ProtonMailMcp.Contracts.MessageSummary;
 
 namespace ProtonMailMcp.Mail;
 
-internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec? cursorCodec = null) : IReadOnlyMailbox, IDisposable
+internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec? cursorCodec = null,
+    PrivateDownloadStore? downloadStore = null) : IReadOnlyMailbox, IDisposable
 {
     private readonly SearchCursorCodec cursors = cursorCodec ?? new SearchCursorCodec();
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -118,8 +119,15 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             var summary = summaries.SingleOrDefault(item => item.UniqueId.Id == uid.Id)
                 ?? throw new MailboxException(MailboxError.MessageNotFound);
             var attachments = summary.Attachments.Take(101).ToArray();
+            var ids = new Dictionary<string, BodyPart>();
+            if (settings.DownloadDirectory is not null && downloadStore is not null)
+            {
+                try { ids = AttachmentParts.Map(summary.Body, token); }
+                catch (MailboxException e) when (e.Error == MailboxError.AttachmentUnsupported) { }
+            }
             var metadata = attachments.Take(100).Select(part => new AttachmentMetadata(
-                MimeText.Sanitize(part.FileName, 1024), MimeText.Sanitize(part.ContentType.MimeType, 256)!, part.Octets)).ToArray();
+                MimeText.Sanitize(part.FileName, 1024), MimeText.Sanitize(part.ContentType.MimeType, 256)!, part.Octets,
+                part is not BodyPartMessage ? ids.FirstOrDefault(pair => ReferenceEquals(pair.Value, part)).Key : null)).ToArray();
             var mapped = MapSummary(folder, summary);
             MessageResult Result(string? text, ContentStatus status, bool truncated = false) =>
                 new(mapped, text, status, truncated, Array.AsReadOnly(metadata), attachments.Length > 100);
@@ -136,6 +144,76 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             catch (BodyLimitException) { return Result(null, ContentStatus.Oversized); }
             catch (MessageNotFoundException) { throw new MailboxException(MailboxError.MessageNotFound); }
         }, cancellationToken);
+    }
+
+    public async Task<AttachmentDownload> DownloadAttachmentAsync(AttachmentRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Reference);
+        var reference = request.Reference;
+        ValidateFolder(reference.Folder);
+        if (reference.Uid == 0 || reference.UidValidity == 0 || !AttachmentParts.ValidId(request.AttachmentId))
+            throw new MailboxException(MailboxError.InvalidInput);
+        if (settings.DownloadDirectory is null || downloadStore is null)
+            throw new MailboxException(MailboxError.AttachmentDownloadsDisabled);
+        PrivateDownloadStore.TemporaryFile? temporary = null;
+        void Cleanup()
+        {
+            if (temporary is null) return;
+            try { temporary.Cleanup(); }
+            catch (MailboxException) when (cancellationToken.IsCancellationRequested)
+            { Console.Error.WriteLine("download: outcome=download_cleanup_failed"); }
+        }
+        return await ExecuteAsync(async (client, token) =>
+        {
+            var folder = await OpenAsync(client, reference.Folder, token);
+            if (folder.UidValidity != reference.UidValidity) throw new MailboxException(MailboxError.StaleReference);
+            var uid = new UniqueId(reference.UidValidity, reference.Uid);
+            var summaries = await folder.FetchAsync(new[] { uid }, MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure, token);
+            var summary = summaries.SingleOrDefault(item => item.UniqueId.Id == reference.Uid)
+                ?? throw new MailboxException(MailboxError.MessageNotFound);
+            var parts = AttachmentParts.Map(summary.Body, token);
+            if (!parts.TryGetValue(request.AttachmentId, out var candidate))
+                throw new MailboxException(MailboxError.AttachmentNotFound);
+            if (candidate is not BodyPartBasic part || candidate is BodyPartMessage)
+                throw new MailboxException(MailboxError.AttachmentUnsupported);
+            if (part.Octets > PrivateDownloadStore.MaxEncodedBytes)
+                throw new MailboxException(MailboxError.AttachmentTooLarge);
+            var encoding = AttachmentParts.Encoding(part);
+            AttachmentParts.RequireEncoding(encoding);
+            var section = string.IsNullOrEmpty(part.PartSpecifier) ? "TEXT" : part.PartSpecifier;
+            ((BoundedImapClient)client).ExpectAttachment(reference.Uid, section);
+            Stream stream;
+            try { stream = await folder.GetStreamAsync(uid, section, token); }
+            catch (MessageNotFoundException)
+            {
+                ((BoundedImapClient)client).RequireNoAttachmentLiteral();
+                var remaining = await folder.FetchAsync(new[] { uid }, MessageSummaryItems.UniqueId, token);
+                throw new MailboxException(remaining.Any(item => item.UniqueId.Id == reference.Uid)
+                    ? MailboxError.AttachmentNotFound : MailboxError.MessageNotFound);
+            }
+            using (stream)
+            {
+                if (stream.Length != part.Octets) throw new MailboxException(MailboxError.AttachmentMalformed);
+                try
+                {
+                    temporary = downloadStore.Create();
+                    var decoded = await AttachmentParts.DecodeAsync(stream, temporary.Stream, encoding, token);
+                    await temporary.Stream.FlushAsync(token);
+                    await temporary.Stream.DisposeAsync();
+                    return new AttachmentDownload(new(folder.FullName, folder.UidValidity, reference.Uid),
+                        request.AttachmentId, "", MimeText.Sanitize(part.FileName, 1024),
+                        MimeText.Sanitize(part.ContentType.MimeType, 256)!, part.Octets, decoded.Length, decoded.Hash);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                { throw new MailboxException(MailboxError.DownloadStorageFailed); }
+            }
+        }, cancellationToken, token => downloadStore.Check(true, token), (result, token) =>
+        {
+            // Allocate the result before the rename commit. Only setting the path remains afterward.
+            var extension = result.MimeType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) ? ".pdf" : ".bin";
+            return result with { Path = temporary!.Publish(extension, token) };
+        }, Cleanup);
     }
 
     private void ValidateFolder(string folder)
@@ -186,7 +264,8 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
         MimeText.Sanitize(summary.Envelope?.Subject, 4096), summary.Envelope?.Date,
         summary.InternalDate, summary.Flags.HasValue ? summary.Flags.Value.HasFlag(MessageFlags.Seen) : null, summary.Size);
 
-    private async Task<T> ExecuteAsync<T>(Func<ImapClient, CancellationToken, Task<T>> operation, CancellationToken callerToken)
+    private async Task<T> ExecuteAsync<T>(Func<ImapClient, CancellationToken, Task<T>> operation, CancellationToken callerToken,
+        Action<CancellationToken>? beforeConnect = null, Func<T, CancellationToken, T>? complete = null, Action? cleanup = null)
     {
         using var timeout = new CancellationTokenSource(OperationDeadline, DeadlineClock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callerToken, timeout.Token);
@@ -196,6 +275,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
         {
             await gate.WaitAsync(token);
             entered = true;
+            beforeConnect?.Invoke(token);
             using var client = new BoundedImapClient();
             client.ServerCertificateValidationCallback = (_, certificate, _, _) =>
             {
@@ -216,7 +296,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             await client.DisconnectAsync(true, token);
             // MailKit may absorb cancellation during LOGOUT; enforce the application deadline too.
             token.ThrowIfCancellationRequested();
-            return result;
+            return complete is null ? result : complete(result, token);
         }
         catch (Exception) when (callerToken.IsCancellationRequested) { throw new OperationCanceledException(callerToken); }
         catch (Exception) when (token.IsCancellationRequested) { throw new MailboxException(MailboxError.Timeout); }
@@ -232,7 +312,11 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
         catch (IOException) { throw new MailboxException(MailboxError.BridgeUnavailable); }
         catch (System.Net.Sockets.SocketException) { throw new MailboxException(MailboxError.BridgeUnavailable); }
         catch (Exception) { throw new MailboxException(MailboxError.ProtocolFailure); }
-        finally { if (entered) gate.Release(); }
+        finally
+        {
+            try { cleanup?.Invoke(); }
+            finally { if (entered) gate.Release(); }
+        }
     }
 
     public void Dispose() => gate.Dispose();

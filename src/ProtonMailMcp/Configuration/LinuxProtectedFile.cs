@@ -9,6 +9,46 @@ internal static partial class LinuxProtectedFile
 
     internal enum FileKind { Password, Configuration, Certificate }
 
+    internal static void ValidateDownloadPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) || path.EndsWith('/') ||
+            path.Any(char.IsControl) || System.Text.Encoding.UTF8.GetByteCount(path) > 3000 ||
+            path.Split('/').Any(part => part is "." or ".."))
+            throw new ConfigurationException("configuration_attachment_downloads_invalid");
+        // Canonical paths avoid distinct spellings of the held directory.
+        if (path.Contains("//", StringComparison.Ordinal))
+            throw new ConfigurationException("configuration_attachment_downloads_invalid");
+    }
+
+    internal static SafeFileHandle OpenDownloadDirectory(string path)
+    {
+        ValidateDownloadPath(path);
+        SafeFileHandle? parent = null;
+        try
+        {
+            parent = OpenHandle("/", Directory, FileKind.Configuration);
+            RequireTrustedAncestor(parent);
+            foreach (var part in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var next = OpenAt(parent, part, Directory, FileKind.Configuration);
+                parent.Dispose();
+                parent = next;
+                RequireTrustedAncestor(parent);
+            }
+            var info = Inspect(parent);
+            if (info.Uid != GetEffectiveUserId() || (info.Mode & 0xFFFF) != 0x41C0)
+                throw new ConfigurationException("configuration_download_directory_unsafe");
+            var result = parent;
+            parent = null;
+            return result;
+        }
+        catch (ConfigurationException)
+        {
+            throw new ConfigurationException("configuration_download_directory_unsafe");
+        }
+        finally { parent?.Dispose(); }
+    }
+
     public static FileStream Open(string path, FileKind kind = FileKind.Password)
     {
         if (!OperatingSystem.IsLinux())
@@ -95,21 +135,25 @@ internal static partial class LinuxProtectedFile
         return new SafeFileHandle(fd, ownsHandle: true);
     }
 
-    private static Statx Inspect(SafeFileHandle handle)
+    internal static Statx Inspect(SafeFileHandle handle)
     {
         // statx ABI is fixed across Linux architectures; AT_EMPTY_PATH inspects this open fd.
-        if (StatxNative(handle, "", 0x1000, 0x20F, out var info) != 0 || (info.Mask & 0x20F) != 0x20F)
+        if (StatxNative(handle, "", 0x1000, 0x30F, out var info) != 0 || (info.Mask & 0x30F) != 0x30F)
             throw new ConfigurationException("configuration_metadata_unavailable");
         return info;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 256)]
-    private struct Statx
+    internal struct Statx
     {
         [FieldOffset(0)] public uint Mask;
+        [FieldOffset(16)] public uint Links;
         [FieldOffset(20)] public uint Uid;
         [FieldOffset(28)] public ushort Mode;
         [FieldOffset(40)] public ulong Size;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
     }
 
     [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8)]
@@ -119,5 +163,5 @@ internal static partial class LinuxProtectedFile
     [LibraryImport("libc", EntryPoint = "statx", StringMarshalling = StringMarshalling.Utf8)]
     private static partial int StatxNative(SafeFileHandle fd, string path, int flags, uint mask, out Statx info);
     [LibraryImport("libc", EntryPoint = "geteuid")]
-    private static partial uint GetEffectiveUserId();
+    internal static partial uint GetEffectiveUserId();
 }

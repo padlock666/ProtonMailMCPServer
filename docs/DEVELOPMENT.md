@@ -46,6 +46,8 @@ Search pagination (authorized 2026-10-21) adds optional `cursor` and nullable `n
 
 ## Toolchain and layout
 
+The [attachment-download contract](ATTACHMENT-DOWNLOADS.md#implementation-shape-and-sequence) is implemented in the same solution with unchanged pinned dependencies. Changes require filesystem, real-adapter protocol and MCP regressions, especially around selected-literal budgets, strict byte decoding, atomic publication and failure cleanup. Live Bridge access remains a separate opt-in, including explicit consent to retain downloaded plaintext.
+
 Use .NET 10, VS Code C# tooling, Generic Host, the official `ModelContextProtocol` package, MailKit/MimeKit, and xUnit. Use one root `ProtonMailMcp.slnx`, `src/ProtonMailMcp`, and `tests/ProtonMailMcp.Tests`. Do not add a web host, database, container, service installer, or extra projects for the MVP.
 
 For dependency/toolchain maintenance:
@@ -72,7 +74,7 @@ For focused verification, select `Unit`, `Protocol`, or `Mcp`. `Protocol` exerci
 
 ## Pinned dependencies and verification sources
 
-`global.json` pins SDK **10.0.112**, disables roll-forward, and excludes prereleases. Both projects target `net10.0` with nullable types and warnings as errors. Select a different SDK only by an intentional pin update.
+`global.json` pins SDK **10.0.113**, disables roll-forward, and excludes prereleases. Both projects target `net10.0` with nullable types and warnings as errors. Select a different SDK only by an intentional pin update.
 
 | Dependency | Exact version | Rationale |
 | --- | --- | --- |

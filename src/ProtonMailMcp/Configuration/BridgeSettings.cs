@@ -22,13 +22,20 @@ internal sealed class ConfigurationDocument
     public string? CertificateFile { get; init; }
     public string[]? AllowedFolders { get; init; }
     public FolderAccessDocument? FolderAccess { get; init; }
+    public AttachmentDownloadsDocument? AttachmentDownloads { get; init; }
+}
+
+internal sealed class AttachmentDownloadsDocument
+{
+    public string? Directory { get; init; }
 }
 
 // Deliberately not a record: generated ToString must never disclose credentials/settings.
 internal sealed class BridgeSettings(
     IPAddress host, int port, BridgeTlsMode tlsMode, string username,
     string password, byte[] certificateDer, IEnumerable<string> allowedFolders,
-    FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist, IEnumerable<string>? excludedFolders = null)
+    FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist, IEnumerable<string>? excludedFolders = null,
+    string? downloadDirectory = null)
 {
     public IPAddress Host { get; } = host;
     public int Port { get; } = port;
@@ -39,6 +46,7 @@ internal sealed class BridgeSettings(
     public IReadOnlyList<string> AllowedFolders { get; } = Array.AsReadOnly(allowedFolders.ToArray());
     public FolderAccessMode FolderAccessMode { get; } = folderAccessMode;
     public IReadOnlyList<string> ExcludedFolders { get; } = Array.AsReadOnly(excludedFolders?.ToArray() ?? []);
+    public string? DownloadDirectory { get; } = downloadDirectory;
 
     public bool IsFolderAllowed(string folder) => FolderAccessMode switch
     {

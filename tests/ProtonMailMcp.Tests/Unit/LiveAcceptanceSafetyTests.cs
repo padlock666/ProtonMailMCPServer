@@ -9,6 +9,24 @@ public sealed class LiveAcceptanceSafetyTests
 {
     [Theory]
     [InlineData(null)]
+    [InlineData("")]
+    [InlineData("I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS")]
+    public void DownloadsNeedAdditionalAuthorizationBeforeSettingsLoad(string? value)
+    {
+        Assert.Throws<InvalidOperationException>(() => LiveAcceptance.RequireDownloadAuthorization("downloads", value));
+        LiveAcceptance.RequireDownloadAuthorization("reads", value);
+        LiveAcceptance.RequireDownloadAuthorization("downloads", "I_AUTHORIZE_LOCAL_ATTACHMENT_FILES");
+    }
+
+    [Fact]
+    public async Task DownloadFixtureCannotInferIdentityHashOrDirectory()
+    {
+        await using var server = new ScriptedImapServer();
+        Assert.Throws<InvalidOperationException>(() => LiveAcceptance.ValidateDownloadFixture(server.Settings(), new LiveManifest()));
+        Assert.Equal(0, server.AcceptedConnections);
+    }
+    [Theory]
+    [InlineData(null)]
     [InlineData("relative.json")]
     [InlineData("/tmp/checkout/config.json")]
     [InlineData("/tmp/checkout/../checkout/config.json")]

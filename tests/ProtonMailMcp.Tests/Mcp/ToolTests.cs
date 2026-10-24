@@ -370,15 +370,113 @@ public sealed class ToolTests
         await server.VerifyAsync();
     }
 
+    [Fact]
+    public async Task DownloadToolDiscoveryAndSyntheticPdfHandoffUsePrivateLocalFiles()
+    {
+        const string pdf = "%PDF-1.4\r\nsynthetic PDF bytes\r\n%%EOF";
+        var encoded = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(pdf));
+        var attachment = ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Pdf(encoded.Length);
+        await using var server = new ScriptedImapServer(
+            new Session(Login(Examine(), Summary("(" + Plain + attachment + "\"MIXED\")"), Body("hello", "1"), Logout())),
+            new Session(Login(Examine(), ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Structure("(" + Plain + attachment + "\"MIXED\")"),
+                ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Payload(encoded, "2"), Logout())));
+        await using var host = await ClientHost.StartAsync(server, downloads: true);
+        var tools = await host.Client.ListToolsAsync();
+        Assert.Equal(new[] { "download_attachment", "get_message", "list_folders", "search_messages" }, tools.Select(t => t.Name).Order());
+        var tool = tools.Single(t => t.Name == "download_attachment").ProtocolTool;
+        Assert.False(tool.Annotations!.ReadOnlyHint);
+        Assert.False(tool.Annotations.DestructiveHint);
+        Assert.False(tool.Annotations.IdempotentHint);
+        Assert.False(tool.Annotations.OpenWorldHint);
+        Assert.Contains("local file", tool.Description);
+        Assert.Equal(new[] { "attachmentId", "folder", "uid", "uidValidity" },
+            tool.InputSchema.GetProperty("required").EnumerateArray().Select(v => v.GetString()).Order());
+        Assert.Equal(new[] { "attachmentId", "mimeType", "originalFilename", "path", "reference", "reportedSize", "sha256", "sizeBytes" },
+            tool.OutputSchema!.Value.GetProperty("properties").EnumerateObject().Select(v => v.Name).Order());
+        var message = Data(await host.Client.CallToolAsync("get_message", Reference()));
+        Assert.Equal("2", message.GetProperty("attachments")[0].GetProperty("attachmentId").GetString());
+        Assert.Empty(Directory.GetFiles(host.DownloadDirectory!));
+        var args = Reference();
+        args["attachmentId"] = "2";
+        var result = Data(await host.Client.CallToolAsync("download_attachment", args));
+        Assert.Equal(pdf, await File.ReadAllTextAsync(result.GetProperty("path").GetString()!));
+        Assert.Equal(host.DownloadDirectory, Path.GetDirectoryName(result.GetProperty("path").GetString()));
+        Assert.Equal(pdf.Length, result.GetProperty("sizeBytes").GetInt32());
+        await server.VerifyAsync();
+    }
+
+    [Theory]
+    [InlineData("savePath", "/tmp/forbidden.pdf")]
+    [InlineData("attachmentId", "1.HEADER")]
+    [InlineData("uid", "42")]
+    [InlineData("attachmentId", null)]
+    public async Task DownloadInvalidInputsFailBeforeAnyConnection(string field, string? value)
+    {
+        await using var server = new ScriptedImapServer();
+        await using var host = await ClientHost.StartAsync(server, downloads: true);
+        var args = Reference();
+        args["attachmentId"] = "1";
+        args[field] = value;
+        Error(await host.Client.CallToolAsync("download_attachment", args), "invalid_input");
+        Assert.Empty(Directory.GetFiles(host.DownloadDirectory!));
+        Assert.Equal(0, server.AcceptedConnections);
+    }
+
+    [Fact]
+    public async Task DownloadErrorsAreSanitizedAndRecoveredWithoutFiles()
+    {
+        await using var server = new ScriptedImapServer(
+            new Session(Login(Examine(), ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Structure(
+                ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Pdf(4)),
+                ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Payload("@@@@"))),
+            new Session(Login(Logout())));
+        await using var host = await ClientHost.StartAsync(server, downloads: true);
+        var args = Reference();
+        args["attachmentId"] = "1";
+        Error(await host.Client.CallToolAsync("download_attachment", args), "attachment_malformed");
+        Assert.Empty(Directory.GetFiles(host.DownloadDirectory!));
+        Data(await host.Client.CallToolAsync("list_folders"));
+        await server.VerifyAsync();
+    }
+
+    [Fact]
+    public async Task DownloadCancellationNotificationRemovesTemporaryOutputAndRecovers()
+    {
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new ScriptedImapServer(
+            new Session(Login(Examine(), ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Structure(
+                ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Pdf(4)),
+                ProtonMailMcp.Tests.Protocol.AttachmentDownloadTests.Payload("YQ=="),
+                new("LOGOUT", WaitForDisconnect: true, Reached: reached))), new Session(Login(Logout())));
+        await using var host = await ClientHost.StartAsync(server, downloads: true);
+        var call = host.Client.SendRequestAsync(new JsonRpcRequest
+        {
+            Id = new RequestId(99), Method = "tools/call",
+            Params = System.Text.Json.Nodes.JsonNode.Parse(
+                """{"name":"download_attachment","arguments":{"folder":"INBOX","uidValidity":7,"uid":42,"attachmentId":"1"}}""")
+        });
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await host.Client.SendMessageAsync(new JsonRpcNotification
+        {
+            Method = "notifications/cancelled", Params = System.Text.Json.Nodes.JsonNode.Parse("""{"requestId":99}""")
+        });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+        Data(await host.Client.CallToolAsync("list_folders").AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Empty(Directory.GetFiles(host.DownloadDirectory!));
+        await server.VerifyAsync();
+    }
+
     private sealed class ClientHost : IAsyncDisposable
     {
         private readonly SyntheticConfiguration config = new();
         private readonly ConcurrentQueue<string> stderr = new();
+        public string? DownloadDirectory { get; private set; }
         public McpClient Client { get; private set; } = null!;
         public static async Task<ClientHost> StartAsync(ScriptedImapServer server, bool wrongPin = false,
-            object? folderAccess = null)
+            object? folderAccess = null, bool downloads = false)
         {
             var host = new ClientHost();
+            if (downloads) host.DownloadDirectory = host.config.EnableDownloads();
             host.config.Values["Port"] = server.Port;
             host.config.Values["TlsMode"] = "SslOnConnect";
             host.config.Values["AllowedFolders"] = new[] { "INBOX" };
@@ -401,7 +499,7 @@ public sealed class ToolTests
             await Client.DisposeAsync();
             config.Dispose();
             foreach (var line in stderr)
-                Assert.Matches(@"\Atool: (list_folders|search_messages|get_message) correlation=[a-f0-9]{32} duration_ms=[0-9]+ outcome=[a-z_]+\z", line);
+                Assert.Matches(@"\Atool: (list_folders|search_messages|get_message|download_attachment) correlation=[a-f0-9]{32} duration_ms=[0-9]+ outcome=[a-z_]+\z", line);
         }
     }
 }

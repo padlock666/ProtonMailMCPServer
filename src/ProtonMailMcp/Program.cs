@@ -11,6 +11,7 @@ try
     if (args is not ["--config", var path])
         throw new ConfigurationException("configuration_usage_requires_config_path");
     var settings = await ConfigurationLoader.LoadAsync(path, CancellationToken.None);
+    using var downloads = settings.DownloadDirectory is { } directory ? new PrivateDownloadStore(directory) : null;
     // Do not ingest appsettings, environment overrides, or command-line provider settings.
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     {
@@ -27,11 +28,12 @@ try
     builder.Logging.AddFilter(_ => false);
     builder.Services.AddSingleton(settings);
     builder.Services.AddSingleton<SearchCursorCodec>();
+    if (downloads is not null) builder.Services.AddSingleton(downloads);
     builder.Services.AddSingleton<IReadOnlyMailbox, MailKitMailbox>();
     builder.Services.AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation { Name = "ProtonMailMcp", Version = "0.1.0" };
-    }).WithStdioServerTransport().WithTools(MailboxTool.CreateApproved());
+    }).WithStdioServerTransport().WithTools(MailboxTool.CreateApproved(downloads is not null));
     using var host = builder.Build();
     await host.RunAsync();
     return 0;

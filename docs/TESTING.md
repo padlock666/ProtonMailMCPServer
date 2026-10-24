@@ -23,6 +23,8 @@ Use a fake `IReadOnlyMailbox` for tool mapping tests only. It cannot prove the r
 
 ## IMAP protocol integration tests
 
+The implemented [attachment-download contract](ATTACHMENT-DOWNLOADS.md#acceptance-matrix) has synthetic coverage for private-filesystem/retention tests, attachment byte/hash checks, conditional fourth-tool discovery, download-only PEEK and transfer limits, and synthetic client PDF handoff. Existing `get_message` tests must continue to prove attachment-payload exclusion. The live download stage requires explicit additional authorization for retained plaintext and operator-prepared expected hashes; ordinary live reads remain metadata-only.
+
 Build a scripted loopback IMAP fixture that runs the actual MailKit adapter against expected requests/responses. Use dedicated ephemeral ports, synthetic messages, and test-only TLS certificates. Do not reuse a user's Bridge listener or modify production TLS policy for tests.
 
 The fixture should admit only expected commands and fail on unexpected commands. Verify:
@@ -30,7 +32,7 @@ The fixture should admit only expected commands and fail on unexpected commands.
 1. Connection negotiation, certificate pinning, required STARTTLS/TLS-on-connect, and authentication ordering.
 2. `EXAMINE` with confirmed read-only access for every selected folder; rejection rather than read/write fallback when the server misbehaves.
 3. UID-based search/summary/body retrieval and `BODY.PEEK` for all content reads.
-4. Body-structure-first retrieval; only the selected text part is downloaded, with no attachment or full-message fetch.
+4. Body-structure-first retrieval; `get_message` downloads only its selected text part; `download_attachment` fetches only the resolved eligible attachment section. No full-message fetch.
 5. Safe logout/disposal with no mutating command or expunging close, including messages already flagged deleted.
 6. No access to denied folders and no retrieval after UIDVALIDITY mismatch.
 7. Certificate mismatch, expired/not-yet-valid pins, missing STARTTLS, wrong credentials, malformed responses, vanished UIDs, abrupt disconnect, and mid-transfer cancellation.
@@ -43,7 +45,7 @@ Capture synthetic wire traffic for assertions. Do not add production protocol lo
 
 Launch the built executable as a child process through the official MCP SDK client, with a temporary synthetic configuration and IMAP fixture. Keep build output out of the protocol stream by launching the built artifact, not an interactive build command.
 
-- Verify initialization, clean shutdown, and discovery of exactly the three approved tools.
+- Verify initialization, clean shutdown, and discovery of exactly three base tools when downloads are omitted and four tools when configured.
 - Assert names, descriptions, input/output schemas, and read-only/non-destructive annotations.
 - Call each tool end-to-end; check summaries, message identities, text, attachment metadata, and content/truncation status.
 - Exercise invalid inputs, denied folders, stale UIDs, missing messages, outages, authentication/TLS failures, timeouts, and cancellation.
@@ -168,3 +170,21 @@ Input failures are tested before any fixture connection. Runtime fixtures cover 
 The SDK cancellation regression sends an explicit `notifications/cancelled` for a known request ID through `McpClient.SendMessageAsync`, asserts the pending SDK request is cancelled, and requires a successful subsequent call within five seconds. Merely cancelling the high-level SDK call's local token did not reliably deliver server cancellation in this environment; do not infer prompt remote cleanup from a cancelled local await. Received cancellation notifications propagate to the adapter. Captured raw stdio tests cover complete tool results and stdin EOF during a stalled LOGOUT: EOF drains the active operation under its existing 30-second deadline, then exits cleanly. It does not promise immediate cancellation on EOF. Child-process termination also closes its sockets; no CLOSE/expunge command is admitted.
 
 SDK client process tests use the initialize-handshake revision `2025-11-25`; the existing default-options client initialization/discovery test is retained as well. Every captured tool diagnostic must match a fixed grammar of operation/correlation/duration/outcome, excluding sensitive fixture values. Separate stdout capture parses every line as MCP JSON and checks the result. Package versions and locks remain unchanged; folder-policy adapter changes are covered above. These tests establish the MCP contracts and pinned adapter behavior against synthetic scripts, never Bridge compatibility or live flag preservation.
+
+## Attachment-download verification and live stage
+
+`DownloadStorageTests` exercises private configuration/handle paths, directory locking, root replacement/mode changes, symlinks/hard links, generated `0600` files, collision/no-overwrite behavior, quotas including sparse/crash files, temporary identity replacement and strict decoder boundaries. `AttachmentDownloadTests` uses the real adapter with ordered TLS/IMAP scripts for top-level/nested PDFs, metadata IDs, restart/repeat downloads, missing/stale/denied/ineligible references, supported/invalid encodings, exact wire cap and decoded overflow, unsolicited UID/section/offset/duplicate literals, missing payloads, cancellation and recovery. Existing body-only PEEK regressions remain required.
+
+SDK process tests cover conditional fourth-tool discovery, strict schemas and annotations, byte/hash/path handoff, input and sanitized runtime errors, cancellation notifications and recovery. Raw stdout/EOF tests cover downloads as well as existing tools: stdout stays MCP JSON; EOF during stalled logout drains to the existing deadline and leaves no completed/temporary download on ordinary cleanup. Successful SDK file reads verify local byte transport, not a particular model's PDF understanding.
+
+The optional live `downloads` stage requires **both** `PROTONMCP_LIVE=I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS` and `PROTONMCP_LIVE_DOWNLOADS=I_AUTHORIZE_LOCAL_ATTACHMENT_FILES`, plus `PROTONMCP_LIVE_STAGE=downloads`, the existing external settings/manifest paths, and an operator-prepared private `AttachmentDownloads.Directory`. Authorization is checked before loading settings. The directory must be outside the checkout; existing dedicated-folder/known-membership rules remain mandatory. Add these fields to the external fixture manifest, using independently known values:
+
+```json
+{
+  "DownloadAttachmentId": "2",
+  "DownloadSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "DownloadSizeBytes": 1000
+}
+```
+
+These are synthetic placeholders and a fragment, not a complete live manifest. The download uses the manifest's existing `AttachmentUid`. The stage captures mailbox state, downloads twice, compares both returned metadata and saved bytes to the expected hash/length, and checks UIDVALIDITY/membership/persistent flags again. It retains both files for operator cleanup and never prepares/changes/cleans up messages. Ordinary live `reads` remains metadata-only. Gate/fixture validation is tested synthetically; this stage has not been run against Bridge.

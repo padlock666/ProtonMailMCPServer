@@ -8,14 +8,19 @@ internal sealed record FolderResult(string Name);
 internal sealed record MessageSummary(MessageReference Reference, string? From, string? To, string? Cc,
     string? Subject, DateTimeOffset? SenderDate, DateTimeOffset? InternalDate, bool? Seen, uint? Size);
 internal sealed record SearchResult(IReadOnlyList<MessageSummary> Messages, bool Truncated, string? NextCursor = null);
-internal sealed record AttachmentMetadata(string? Filename, string MimeType, uint Size);
+internal sealed record AttachmentMetadata(string? Filename, string MimeType, uint Size, string? AttachmentId = null);
+internal sealed record AttachmentRequest(MessageReference Reference, string AttachmentId);
+internal sealed record AttachmentDownload(MessageReference Reference, string AttachmentId, string Path,
+    string? OriginalFilename, string MimeType, uint ReportedSize, long SizeBytes, string Sha256);
 internal enum ContentStatus { Available, Missing, Unsupported, Oversized, Malformed }
 internal sealed record MessageResult(MessageSummary Summary, string? Text, ContentStatus ContentStatus,
     bool Truncated, IReadOnlyList<AttachmentMetadata> Attachments, bool AttachmentsTruncated);
 internal enum MailboxError
 {
     InvalidInput, DeniedFolder, FolderUnavailable, BridgeUnavailable, AuthenticationFailed,
-    TlsFailed, StaleReference, MessageNotFound, Timeout, ProtocolFailure
+    TlsFailed, StaleReference, MessageNotFound, Timeout, ProtocolFailure,
+    AttachmentDownloadsDisabled, AttachmentNotFound, AttachmentUnsupported, AttachmentTooLarge,
+    AttachmentMalformed, DownloadDirectoryUnsafe, DownloadLimitExceeded, DownloadStorageFailed, DownloadCleanupFailed
 }
 // Fixed code only: never retain a raw exception, server response, or caller input.
 internal sealed class MailboxException(MailboxError error) : Exception(error.ToString())

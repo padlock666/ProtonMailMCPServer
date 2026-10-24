@@ -4,13 +4,15 @@ Status: approved by the project owner on 2026-10-17; Phases 1–3 implemented wi
 
 Owner-requested extension (2026-10-21): [message search pagination](docs/SEARCH-PAGINATION.md) implements forward cursors, query/UIDVALIDITY binding, mailbox-change semantics, and regression requirements. Live Bridge pagination acceptance remains pending; see PLAN for synthetic evidence.
 
+Owner-requested extension (implementation authorized 2026-10-21): [attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) specifies an opt-in fourth tool that saves decoded attachment bytes into a configured private directory and returns path/metadata. It is implemented with private storage and conditional registration; live download and client PDF interpretation acceptance remain pending.
+
 ## Goals and scope
 
 Allow a trusted local MCP client to discover permitted folders, search message summaries, and retrieve a message's text without changing mailbox content or persistent flags.
 
 The MVP serves one user and one Bridge account on Linux. The client starts the application as a stdio child process. Bridge remains a separately installed and operated dependency. The server must not manage Bridge login, Proton encryption keys, or Bridge's internal cache.
 
-Expose folders permitted by an explicit configuration policy: a narrow allowlist, initially `INBOX`, or owner-requested `AllExcept` access (authorized 2026-10-19). Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Exclude HTTP, SMTP, body search, attachment payloads, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
+Expose folders permitted by an explicit configuration policy: a narrow allowlist, initially `INBOX`, or owner-requested `AllExcept` access (authorized 2026-10-19). Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Attachment payloads are available only through the explicitly configured download tool. Exclude HTTP, SMTP, body search, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
 
 ## Architecture
 
@@ -29,7 +31,7 @@ src/ProtonMailMcp/
   Configuration/   # Validated options, secret/certificate loading
   Contracts/       # Application inputs, result DTOs, error categories
   Mail/            # IReadOnlyMailbox, MailKit adapter, MIME conversion
-  Tools/           # Three MCP handlers and descriptions
+  Tools/           # Three base tools plus configured attachment download
 tests/ProtonMailMcp.Tests/
   Unit/
   Protocol/
@@ -40,9 +42,9 @@ tests/ProtonMailMcp.Tests/
 
 The host owns dependency injection, configuration validation, lifetime, and stderr logging. Use the official SDK's `ModelContextProtocol` hosting package with Generic Host and stdio transport. Do not introduce ASP.NET Core.
 
-`IReadOnlyMailbox` exposes only the three read capabilities below, with asynchronous methods and cancellation tokens. It returns application DTOs, never MailKit clients, folders, or mutable message objects. The concrete adapter owns MailKit usage. MIME text conversion should be independently testable without a network connection.
+`IReadOnlyMailbox` exposes the three base read capabilities and the optional attachment download below, with asynchronous methods and cancellation tokens. It returns application DTOs, never MailKit clients, folders, or mutable message objects. The concrete adapter owns MailKit usage. MIME text conversion should be independently testable without a network connection.
 
-Explicitly register approved tools rather than broadly discovering every attributed method in the assembly. Mark them read-only and non-destructive; these annotations do not enforce safety.
+Explicitly register approved tools rather than broadly discovering every attributed method in the assembly. Mark base tools read-only and non-destructive, and attachment downloads as a non-destructive local write; these annotations do not enforce safety.
 
 ## Tool contracts
 
@@ -85,9 +87,11 @@ Use structured results supported by the selected official SDK version. Exact JSO
 
 ## Phase 2 application boundary
 
-`IReadOnlyMailbox` now exposes `ListFoldersAsync`, `SearchAsync`, and `GetMessageAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. Phase 3 explicitly registers only the three approved MCP tools. JSON uses camelCase properties, lowercase content-status strings, and snake_case error codes; see [usage](docs/USAGE.md#tool-inputs-and-results).
+The download extension adds nullable attachment IDs to `get_message` metadata and `DownloadAttachmentAsync` to the small mailbox interface. It preserves read-only mailbox operations while adding an explicit local file side effect, private storage, bounded byte decoding, and completion after safe logout. Its tool therefore has `ReadOnlyHint=false`. See [the complete contract and implementation sequence](docs/ATTACHMENT-DOWNLOADS.md); PDF interpretation remains the client's responsibility.
 
-The MCP boundary uses three explicit `McpServerTool` instances, strict JSON deserialization, generated object schemas, and structured results with equivalent JSON text content. It catches runtime failures before SDK error formatting and emits only fixed codes; diagnostics contain only operation, correlation ID, duration, and outcome. Unknown fields, numeric strings, malformed dates, and missing required fields fail before adapter I/O. Received cancellation notifications pass through to the adapter; stdin EOF may drain an active operation to its deadline.
+`IReadOnlyMailbox` exposes `ListFoldersAsync`, `SearchAsync`, `GetMessageAsync`, and `DownloadAttachmentAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. The original three tools remain registered; the attachment-download tool is registered only when its private directory is configured. JSON uses camelCase properties, lowercase content-status strings, and snake_case error codes; see [usage](docs/USAGE.md#tool-inputs-and-results).
+
+The MCP boundary uses three base `McpServerTool` instances and an optional fourth download tool, strict JSON deserialization, generated object schemas, and structured results with equivalent JSON text content. It catches runtime failures before SDK error formatting and emits only fixed codes; diagnostics contain only operation, correlation ID, duration, and outcome. Unknown fields, numeric strings, malformed dates, and missing required fields fail before adapter I/O. Received cancellation notifications pass through to the adapter; stdin EOF may drain an active operation to its deadline.
 
 The adapter requests UID summaries and BODYSTRUCTURE before any body transfer. A top-level text body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. The MailKit folder stream factory rejects literals over 1 MiB before allocation, and bounded backing streams also reject oversized writes. MIME transfer/charset decoding is strict; malformed text returns `Malformed`. MimeKit's tokenizer converts HTML to plain text without evaluating markup or retrieving references. Primary body candidates are checked to exclude attached text, attachment containers, and attached messages.
 
@@ -125,7 +129,7 @@ Use stderr for operation name, duration, outcome, and correlation ID. Stdout is 
 | Serialized calls | Avoid shared IMAP state/concurrency hazards | No parallel mailbox throughput |
 | No persistent cache | Minimize retained plaintext and invalidation logic | Repeated IMAP work |
 | Forward pagination by descending UID | Traverse matches without offsets or retained result sets | Cursors expire on restart; IMAP may still return many matching UIDs internally; pages are not a snapshot |
-| Text and metadata only | Small, useful reading surface | No attachment content or full fidelity HTML |
+| Body text and attachment metadata by default; explicit file downloads | Small default reading surface with original-file handoff when configured | No server-side attachment interpretation or full fidelity HTML; downloads retain local plaintext |
 | Exact certificate pin | Trust the specific local Bridge instance | Manual update when the certificate changes |
 | Protocol plus live tests | Verify commands and Bridge behavior | Live compatibility must be checked separately |
 
