@@ -6,7 +6,7 @@ Build a small, read-only Proton Mail MCP server for Linux using C#/.NET 10, the 
 
 The design is approved. See `PLAN.md` for implemented phases and the next authorized scope. A plan alone does not authorize implementation of later phases. Once implementation is requested, carry out the authorized scope without repeatedly asking for routine implementation approval.
 
-The attachment-download extension was authorized on 2026-10-21; see `docs/ATTACHMENT-DOWNLOADS.md` for its private-storage, retention and verification requirements.
+Optional attachment downloads follow `docs/ATTACHMENT-DOWNLOADS.md` for private storage, retention and verification requirements; authorization records remain in `PLAN.md`.
 
 ## Read before working
 

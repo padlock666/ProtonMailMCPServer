@@ -1,18 +1,12 @@
 # Approved MVP design
 
-Status: approved by the project owner on 2026-10-17; Phases 1–3 implemented with synthetic evidence. The mailbox adapter and MCP contracts are implemented; live Bridge acceptance remains Phase 4. This document records the approved architecture and behavior. [PLAN.md](PLAN.md) tracks execution; [SECURITY.md](SECURITY.md) defines the security boundaries.
-
-Owner-requested extension (2026-10-21): [message search pagination](docs/SEARCH-PAGINATION.md) implements forward cursors, query/UIDVALIDITY binding, mailbox-change semantics, and regression requirements. Live Bridge pagination acceptance remains pending; see PLAN for synthetic evidence.
-
-Owner-requested extension (implementation authorized 2026-10-21): [attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) specifies an opt-in fourth tool that saves decoded attachment bytes into a configured private directory and returns path/metadata. It is implemented with private storage and conditional registration; live download and client PDF interpretation acceptance remain pending.
+Approved architecture and implementation responsibilities. [PLAN.md](PLAN.md) records authorizations, evidence and pending acceptance; [SECURITY.md](SECURITY.md) defines mandatory controls. Exact tool inputs, results, limits and errors belong in [USAGE.md](docs/USAGE.md); configuration belongs in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Goals and scope
 
-Allow a trusted local MCP client to discover permitted folders, search message summaries, and retrieve a message's text without changing mailbox content or persistent flags.
+Serve one trusted local MCP client and one Bridge account on Linux over stdio. Discover permitted folders, search summaries and retrieve message text without changing mailbox content or persistent flags. Optional attachment downloads save decoded bytes to private local storage for the client's document tools.
 
-The MVP serves one user and one Bridge account on Linux. The client starts the application as a stdio child process. Bridge remains a separately installed and operated dependency. The server must not manage Bridge login, Proton encryption keys, or Bridge's internal cache.
-
-Expose folders permitted by an explicit configuration policy: a narrow allowlist, initially `INBOX`, or owner-requested `AllExcept` access (authorized 2026-10-19). Support headers, sender-date filters, unread filters, text bodies, and attachment metadata. Attachment payloads are available only through the explicitly configured download tool. Exclude HTTP, SMTP, body search, multiple accounts, persistent caching/indexing, background synchronization, and direct Proton APIs.
+Bridge is separately installed and operated. The server does not manage login, Proton keys or Bridge caches. HTTP, SMTP, body search, multiple accounts, persistent caching/indexing, background synchronization and direct Proton APIs are outside scope.
 
 ## Architecture
 
@@ -24,13 +18,13 @@ flowchart LR
     Bridge -->|Managed by Bridge| Proton[Proton Mail]
 ```
 
-Create one console application project targeting `net10.0` and one xUnit test project. The intended layout is:
+Keep one `net10.0` console application and one xUnit project:
 
 ```text
 src/ProtonMailMcp/
-  Configuration/   # Validated options, secret/certificate loading
-  Contracts/       # Application inputs, result DTOs, error categories
-  Mail/            # IReadOnlyMailbox, MailKit adapter, MIME conversion
+  Configuration/   # Validated options, protected files and certificate loading
+  Contracts/       # Immutable inputs, results and error categories
+  Mail/            # MailKit adapter, MIME conversion, cursors and private downloads
   Tools/           # Three base tools plus configured attachment download
 tests/ProtonMailMcp.Tests/
   Unit/
@@ -40,105 +34,65 @@ tests/ProtonMailMcp.Tests/
   Fixtures/        # Synthetic data only
 ```
 
-The host owns dependency injection, configuration validation, lifetime, and stderr logging. Use the official SDK's `ModelContextProtocol` hosting package with Generic Host and stdio transport. Do not introduce ASP.NET Core.
+The Generic Host owns DI, validated startup configuration, lifetime and stderr diagnostics. Use the official MCP SDK with explicit stdio transport; do not introduce ASP.NET Core or assembly-wide tool discovery. Dependency pins and maintenance commands are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-`IReadOnlyMailbox` exposes the three base read capabilities and the optional attachment download below, with asynchronous methods and cancellation tokens. It returns application DTOs, never MailKit clients, folders, or mutable message objects. The concrete adapter owns MailKit usage. MIME text conversion should be independently testable without a network connection.
+## Application boundary
 
-Explicitly register approved tools rather than broadly discovering every attributed method in the assembly. Mark base tools read-only and non-destructive, and attachment downloads as a non-destructive local write; these annotations do not enforce safety.
+`IReadOnlyMailbox` exposes four asynchronous, cancellable methods: `ListFoldersAsync`, `SearchAsync`, `GetMessageAsync` and `DownloadAttachmentAsync`. Only immutable application DTOs cross this boundary; MailKit clients, folders and mutable messages stay inside the adapter. MIME conversion is independently testable.
 
-## Tool contracts
+Register the mailbox adapter as a lazy singleton: initialization/discovery validate local settings but make no mailbox connection. Explicitly register three base `McpServerTool` instances; register `download_attachment` only when private storage is configured. The application boundary also rejects downloads when disabled. Base tools are read-only/non-destructive; downloads declare their local write and retained-file side effect. Annotations do not enforce safety.
 
-### `list_folders`
+The MCP boundary strictly deserializes arguments and rejects unknown fields, numeric strings, malformed dates and missing required values before I/O. It produces structured results and equivalent JSON text. Catch runtime failures before SDK formatting; expose fixed codes without underlying exceptions or server text. [USAGE.md](docs/USAGE.md#tool-inputs-and-results) defines the wire contract and cancellation behavior.
 
-No arguments. Return existing, selectable folders permitted by the configured policy, using Bridge's full folder names. Allowlist mode looks up configured names. `AllExcept` mode includes INBOX and enumerates all advertised personal, shared, and other namespaces with MailKit's typed folder-list API, including unsubscribed folders, then filters exclusions and duplicates. Enumerate on each call so new folders/labels appear automatically. Return at most 4,096 folders with control-free nonblank full names of at most 1,024 characters; exceeding the count fails with `protocol_failure` without a partial result. Do not return denied folder names or create, subscribe to, or repair folders. Nonselectable and missing entries are not usable folders.
+## Adapter responsibilities
 
-### `search_messages`
+| Operation | Implementation responsibility |
+| --- | --- |
+| Folder listing | Resolve configured allowlist names, or enumerate all personal/shared/other namespaces with typed APIs for AllExcept, including unsubscribed folders. Re-enumerate each call; filter denied, duplicate, missing and nonselectable entries. Enforce output bounds without partial success. |
+| Search | Build typed AND queries; recipient covers To/Cc. Use sender Date header queries SENTSINCE/SENTBEFORE without internal-date fallback. Retrieve only selected UID summaries in descending UID order. The [pagination contract](docs/SEARCH-PAGINATION.md) defines cursor authentication, range/progress algorithms and race semantics. |
+| Message retrieval | Check folder policy and UIDVALIDITY before fetching. Request UID summary/BODYSTRUCTURE first, then only the primary non-attachment plain-text body or HTML converted to text. Preserve alternative/related selection; exclude attached text, containers and messages. Do not concatenate alternatives, fetch full messages/attachments or choose another part to evade a limit. |
+| Attachment download | Resolve eligibility against fresh BODYSTRUCTURE; fetch one selected part, strictly transfer-decode bytes into bounded private storage and publish only after safe logout. The [download contract](docs/ATTACHMENT-DOWNLOADS.md) defines identity, limits, retention and commit/failure behavior. |
 
-Required input: folder full name. Optional inputs: sender substring, recipient substring, subject substring, sent-date start, sent-date end, unread status, limit, and cursor.
+A top-level body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. Reject oversized literals before allocation and oversized writes during transfer. Strict MIME transfer/charset decoding yields an explicit malformed status rather than repaired content. MimeKit converts HTML without rendering, execution or network access. Oversized, missing and unsupported bodies return metadata with an explicit content status.
 
-- Combine supplied filters with AND. Use MailKit's typed search builders, never raw caller-supplied IMAP syntax.
-- Recipient filtering covers To and Cc. Bcc is not a reliable search target for received mail.
-- As requested by the project owner on 2026-10-18, dates use the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, at calendar-day precision: inclusive `sentStart`, exclusive `sentEnd`, ignoring time and timezone rather than converting to UTC. Reject malformed or reversed ranges. This replaces the original delivery-date filters; `receivedStart`/`receivedEnd` are no longer accepted. No fallback to IMAP internal date occurs. Missing, malformed or inaccurate sender dates can affect matching; Bridge's live handling remains to be verified.
-- Unread omitted means either status; true means unseen; false means seen. Reading this flag must not change it.
-- Default limit is 20; valid limits are 1 through 50. Reject invalid values rather than silently broadening a query.
-- Return highest UIDs first within the selected folder. This ordering is not a guarantee of chronology by sender date.
-- Return summaries and a nullable `nextCursor`; `truncated` is true exactly when a cursor is returned. Repeat the same folder/filters and supply the cursor for the next page; the page size may change. Stop on a null cursor, including after short/empty pages caused by disappearing messages. Cursors bind the query, folder epoch, and exclusive UID boundary, and become invalid after server restart. There is no cross-folder search; [pagination details](docs/SEARCH-PAGINATION.md) define format, errors, race behavior, and compatibility.
-- An unfiltered search is permitted and returns the highest matching UIDs within the limit.
-
-Each summary includes folder, UIDVALIDITY, UID, From, To/Cc, subject, sender date when available, IMAP internal date, seen status, and reported message size. Preserve absent/malformed optional metadata as absent rather than inventing values.
-
-### `get_message`
-
-Required inputs: folder full name, UIDVALIDITY, and UID. Validate unsigned identifiers and check the folder policy before connecting and against the resolved full name before opening. Search enforces the same policy.
-
-After opening the folder read-only, compare its current UIDVALIDITY. Reject a mismatch as a stale reference; do not reinterpret the UID in the new validity epoch. A missing UID returns not-found, including disappearance between summary and body fetch.
-
-Return the summary, main text body, attachment metadata, and explicit content/truncation status:
-
-- Fetch body structure first. Prefer the primary non-attachment `text/plain` body; otherwise convert the primary HTML body to text using MimeKit utilities without rendering or network access.
-- Preserve the primary body selection rules for multipart alternatives/related content. Do not concatenate all alternatives or traverse attached messages as body text.
-- Retrieve only the selected text part. Do not download the entire MIME message as a shortcut or fetch attachment payloads.
-- Metadata includes attachment filename, MIME type, and reported size when available. Size describes the server-reported body-part size, not a promise of exact decoded bytes. Names are data, never filesystem paths.
-- Reject selected text-part transfers over 1 MiB (1,048,576 bytes). Check advertised size and enforce actual transfer limits before unbounded buffering/conversion.
-- Cap returned body text at 32,000 characters with a truncation indicator. Oversized, missing, malformed, or unsupported bodies yield metadata with an explanatory content status; do not silently report successful full-body retrieval.
-- Do not fetch alternate bodies or attachments to bypass a size limit.
-
-Use structured results supported by the selected official SDK version. Exact JSON property names and error-code spellings are frozen by Phase 3 contract tests and documented in [usage](docs/USAGE.md#tool-inputs-and-results).
-
-## Phase 2 application boundary
-
-The download extension adds nullable attachment IDs to `get_message` metadata and `DownloadAttachmentAsync` to the small mailbox interface. It preserves read-only mailbox operations while adding an explicit local file side effect, private storage, bounded byte decoding, and completion after safe logout. Its tool therefore has `ReadOnlyHint=false`. See [the complete contract and implementation sequence](docs/ATTACHMENT-DOWNLOADS.md); PDF interpretation remains the client's responsibility.
-
-`IReadOnlyMailbox` exposes `ListFoldersAsync`, `SearchAsync`, `GetMessageAsync`, and `DownloadAttachmentAsync` using immutable application records in `Contracts`. It is registered as a lazy singleton, so stdio initialization still makes no mailbox connection. The original three tools remain registered; the attachment-download tool is registered only when its private directory is configured. JSON uses camelCase properties, lowercase content-status strings, and snake_case error codes; see [usage](docs/USAGE.md#tool-inputs-and-results).
-
-The MCP boundary uses three base `McpServerTool` instances and an optional fourth download tool, strict JSON deserialization, generated object schemas, and structured results with equivalent JSON text content. It catches runtime failures before SDK error formatting and emits only fixed codes; diagnostics contain only operation, correlation ID, duration, and outcome. Unknown fields, numeric strings, malformed dates, and missing required fields fail before adapter I/O. Received cancellation notifications pass through to the adapter; stdin EOF may drain an active operation to its deadline.
-
-The adapter requests UID summaries and BODYSTRUCTURE before any body transfer. A top-level text body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. The MailKit folder stream factory rejects literals over 1 MiB before allocation, and bounded backing streams also reject oversized writes. MIME transfer/charset decoding is strict; malformed text returns `Malformed`. MimeKit's tokenizer converts HTML to plain text without evaluating markup or retrieving references. Primary body candidates are checked to exclude attached text, attachment containers, and attached messages.
-
-Returned subject/address fields are capped at 4,096 characters each, attachment filenames at 1,024, MIME types at 256, and attachment metadata at 100 entries with `AttachmentsTruncated`. Control characters are removed from metadata; body text preserves line breaks and tabs. Search substrings are nonblank, control-free, and capped at 1,024 characters. These bounds constrain output, not MailKit's internal metadata parsing or the total matching UID list.
-
-Malformed protocol responses and unexpected disconnections map to a sanitized Bridge-unavailable error; explicit rejected commands and unconfirmed read-only access map to a sanitized protocol error. Error objects retain no underlying exception or server text. Successful sessions use LOGOUT; failed/cancelled sessions dispose immediately, with no folder close and no retry. A post-logout token check enforces the deadline even when MailKit absorbs cancellation during logout.
+Sanitize/control-strip metadata and enforce the [output limits](docs/USAGE.md#mailbox-functionality-and-limits); body text preserves line breaks and tabs. Missing optional metadata stays absent. These caps do not bound MailKit's internal metadata parsing or the full matching-UID set.
 
 ## Connection lifecycle and failure handling
 
-Serialize mailbox operations using an asynchronous gate. One operation creates one client, connects, verifies TLS, authenticates, performs its read, and disconnects/disposes. Do not share an active MailKit client across concurrent calls.
+Serialize operations through an asynchronous gate. Each operation creates one client, connects to the configured literal loopback endpoint, verifies required TLS and the exact certificate pin before authentication, performs its read and logs out/disposes. Never share an active client across calls.
 
-The operation deadline is 30 seconds, including waiting for the gate. Pass the linked deadline and client cancellation through connection, authentication, search, fetch, and cleanup. Cleanup must not expunge or indefinitely extend the operation. Dispose a failed/cancelled connection; the next operation establishes a new one. Do not automatically retry authentication, TLS failures, or interrupted operations.
+The 30-second deadline includes queue time, I/O and cleanup. Propagate linked client cancellation/deadline tokens throughout. Open folders only read-only and verify access; fetch content through PEEK. No read/write fallback, folder-close command, expunge or automatic retry is permitted. Dispose failed/cancelled sessions immediately; the next call uses a fresh connection.
 
-Open folders with `FolderAccess.ReadOnly`, verify the resulting access, and fetch body sections through PEEK. No read/write fallback is permitted. Disconnect without a folder-close command that could expunge. See the full controls in [SECURITY.md](SECURITY.md).
+A post-logout token check enforces the deadline when MailKit absorbs cancellation during logout. Downloads perform this check before atomic publication; afterward their commit semantics apply. Received MCP cancellation notifications reach the adapter; stdin EOF can drain an active operation to its deadline.
 
-Configuration errors fail startup clearly and safely. Bridge availability is checked lazily by mailbox calls so a temporary Bridge outage does not prevent MCP initialization. Runtime errors distinguish invalid input, denied folder, unavailable/missing folder, Bridge unavailable, authentication failure, TLS failure, stale reference, message not found, and timeout. Unsupported/oversized body status is represented in a metadata result. Sanitize all exposed messages; never serialize raw exceptions or protocol transcripts. Execution errors use MCP tool-error semantics rather than masquerading as successful empty results; client cancellation follows the SDK's cancellation behavior.
+Startup configuration errors fail safely; temporary Bridge outages do not prevent MCP initialization. Runtime failures use MCP tool-error semantics, distinct from successful empty searches or metadata-only body statuses. Malformed protocol replies/disconnections map to Bridge-unavailable; rejected commands and unconfirmed read-only access map to protocol failure. See USAGE for exact codes.
 
 ## Configuration and observability
 
-Load explicit configuration from outside the repository using a configuration-file path. Require owner-private regular files and private parent directories for the JSON settings, exported public certificate, and password; reject symlinks and writable ancestors before reading through validated handles. Required settings are Bridge username, IMAP port, explicit TLS mode, exported public certificate path, password-file path, and a valid folder access policy. Host defaults to literal `127.0.0.1`; reject non-loopback addresses. Keep deadline and content/result limits fixed for the MVP.
+Load one explicit external JSON file and protected password/public-certificate files at startup; changes require restart. Enforce the [configuration contract](docs/CONFIGURATION.md) and [security controls](SECURITY.md) rather than adding alternate settings sources.
 
-The setup template starts with `FolderAccess: { Mode: "Allowlist", AllowedFolders: ["INBOX"] }`. Legacy top-level `AllowedFolders` remains supported. The alternative is `FolderAccess: { Mode: "AllExcept", ExcludedFolders: [] }`, where an empty exclusion list explicitly permits all folders, including future labels/folders. Reject mixed formats, missing/unknown modes, inappropriate lists, null lists, duplicate/unknown JSON properties, and missing/empty allowlists. See [configuration](docs/CONFIGURATION.md) for the JSON contract and limits.
+An explicit folder policy applies before connection and to resolved names. AllExcept permits future folders automatically; exclusions restrict access paths, so overlapping messages can remain visible through other labels. Live acceptance stays limited to one dedicated allowlisted folder.
 
-Both lists match exact full names, with IMAP's case-insensitive `INBOX` exception. No wildcards, prefixes, or implicit descendant rules. Exclusions restrict folder access only: a message with an excluded label can still be returned from another permitted folder/label. `AllExcept` grants access to newly created folders automatically. The live acceptance suite continues to require a single dedicated allowlisted folder.
-
-Use stderr for operation name, duration, outcome, and correlation ID. Stdout is MCP protocol only. Do not log credentials, folders, identifiers, addresses, subjects, search filters, bodies, or production wire traffic. No telemetry or persistent mailbox cache is part of the MVP.
+Stdout contains only MCP traffic. Stderr diagnostics contain only operation, correlation ID, duration and fixed outcome; no content, credentials, identifiers, paths, filters, cursors or raw exceptions. No telemetry or persistent mailbox cache is introduced.
 
 ## Decisions and trade-offs
 
-| Decision | Reason | Cost or limitation |
+| Decision | Benefit | Cost or limitation |
 | --- | --- | --- |
-| Stdio and one local user | Small deployment and trust model | No remote/shared service |
-| Allowlist, initially INBOX; explicit AllExcept option | Narrow default plus convenient access across Bridge labels | AllExcept automatically exposes future folders; exclusions do not hide overlapping messages |
-| One connection per operation | Simple ownership, cleanup, and recovery | Repeated TLS/authentication overhead |
-| Serialized calls | Avoid shared IMAP state/concurrency hazards | No parallel mailbox throughput |
-| No persistent cache | Minimize retained plaintext and invalidation logic | Repeated IMAP work |
-| Forward pagination by descending UID | Traverse matches without offsets or retained result sets | Cursors expire on restart; IMAP may still return many matching UIDs internally; pages are not a snapshot |
-| Body text and attachment metadata by default; explicit file downloads | Small default reading surface with original-file handoff when configured | No server-side attachment interpretation or full fidelity HTML; downloads retain local plaintext |
-| Exact certificate pin | Trust the specific local Bridge instance | Manual update when the certificate changes |
-| Protocol plus live tests | Verify commands and Bridge behavior | Live compatibility must be checked separately |
+| Stdio, one local user | Small deployment/trust model | No remote/shared service; client decides model disclosure |
+| Narrow allowlist or explicit AllExcept | Controlled access or convenient label discovery | AllExcept exposes future folders; exclusions do not hide overlapping messages |
+| Serialized, per-operation connections | Simple ownership, cleanup and recovery | Repeated TLS/authentication and no parallel mailbox throughput |
+| No persistent cache; forward UID cursors | Less retained plaintext/state | Searches can materialize many UIDs; cursors expire on restart; no snapshot |
+| Text/metadata plus optional file handoff | Small default retrieval surface | No server document interpretation; downloads retain plaintext |
+| Exact certificate pin | Trust the intended local Bridge | Operator must replace rotated pins |
+| Protocol and separate live tests | Verify commands and Bridge behavior | Synthetic success does not establish Bridge compatibility |
 
-The MVP does not promise constant-memory searches or folder enumeration for arbitrarily large mailboxes, transactional snapshots, or stable results while other clients modify mail. AllExcept discovery materializes folder metadata and the complete permitted folder list under the existing deadline. UIDVALIDITY protects message identity; it is not a mailbox snapshot. Bridge labels/folders may expose the same underlying message in multiple locations; no cross-folder deduplication is planned.
+Folder enumeration/metadata parsing are not constant-memory for arbitrarily large mailboxes. UIDVALIDITY protects identity, not a snapshot; other clients can change results. Labels can expose the same underlying message in multiple folders; no cross-folder deduplication is planned.
 
 ## Primary references
 
-- [Official MCP C# SDK](https://github.com/modelcontextprotocol/csharp-sdk) and [package/stdio guidance](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/getting-started.md).
-- [MailKit folder access](https://mimekit.net/docs/html/T_MailKit_FolderAccess.htm), [body-part retrieval](https://mimekit.net/docs/html/M_MailKit_IMailFolder_GetBodyPartAsync.htm), and [fetch implementation](https://raw.githubusercontent.com/jstedfast/MailKit/master/MailKit/Net/Imap/ImapFolderFetch.cs).
+- [Official MCP C# SDK](https://github.com/modelcontextprotocol/csharp-sdk).
+- [MailKit folder access](https://mimekit.net/docs/html/T_MailKit_FolderAccess.htm) and [pinned fetch implementation](https://raw.githubusercontent.com/jstedfast/MailKit/4.18.1/MailKit/Net/Imap/ImapFolderFetch.cs).
 - [Proton Bridge settings](https://proton.me/support/comprehensive-guide-to-bridge-settings).
 
-References establish feasibility, not a dependency pin. Verify APIs and wire behavior against the versions chosen during implementation.
+References establish feasibility; verify APIs and wire behavior against the pinned release.

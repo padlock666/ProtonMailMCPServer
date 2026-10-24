@@ -1,6 +1,6 @@
-# Attachment downloads — design and implementation plan
+# Attachment download contract
 
-Status: **implementation authorized on 2026-10-21 and implemented; synthetic verification recorded in PLAN**. The owner requested downloading an attachment into a configured private directory and returning its path and metadata, so that the local AI client can use its own document tools. This document defines that scope change. Live Bridge downloads and intended-client PDF interpretation remain separate acceptance work; [PLAN.md](../PLAN.md) tracks their status.
+Detailed attachment identity, retrieval, private-storage lifecycle and acceptance requirements extending [DESIGN.md](../DESIGN.md). [USAGE.md](USAGE.md) covers client calls; [CONFIGURATION.md](CONFIGURATION.md#optional-attachment-downloads) owns settings/path validation. See [PLAN.md](../PLAN.md#attachment-downloads) for authorization, evidence and pending client/live acceptance.
 
 ## Product behavior and scope
 
@@ -12,23 +12,9 @@ The client must have permission to read the same filesystem location. A path on 
 
 ## Configuration and enablement
 
-One optional configuration object is read at startup alongside the existing settings:
-
-```json
-{
-  "AttachmentDownloads": {
-    "Directory": "/absolute/private/directory/attachments"
-  }
-}
-```
-
-This is an optional fragment to add to a complete external configuration. Omit `AttachmentDownloads` to disable downloads. When omitted, register exactly the existing three tools and do not inspect, create, or lock a download directory. When present, require a non-null object with exactly one nonblank `Directory`; reject null, unknown/duplicate fields, and invalid paths at startup. No implicit default directory, environment override, or separate `Enabled` switch. When enabled, valid configuration registers exactly four tools; restart is required to enable, disable, or change the directory.
-
-The operator creates a dedicated directory outside the checkout and outside the settings/credential directory. Require a local filesystem supporting the Linux operations below. The directory must already exist, be owned by the effective user, and have mode `0700` without special bits. Require an absolute, control-free path of at most 3,000 UTF-8 bytes, without `.`/`..` components, symlinks, or trailing slash; `/` is invalid. Ancestors follow the existing trusted-owner/non-writable rules, including the root-owned sticky-directory exception. Do not create or chmod the configured directory. Reject a download directory that is the same as, or an ancestor of, the loaded configuration, password, or certificate path. Repository placement remains an operator rule, as with existing settings; do not search for repository roots.
+Omitting `AttachmentDownloads` disables downloads and registers exactly three tools without inspecting/locking storage. Valid configuration enables exactly four tools; the application boundary also enforces enablement. The operator prepares a dedicated `0700` directory outside the checkout and settings/credential storage. See [CONFIGURATION.md](CONFIGURATION.md#optional-attachment-downloads) for the JSON fragment, exact path/permission rules and startup diagnostics. The server never creates or repairs the directory; changes require restart.
 
 Open and validate directories by handle using the existing Linux protected-path approach. Hold a close-on-exec directory handle and a nonblocking exclusive advisory lock for the server lifetime. A second server using that directory fails startup. Validate path-to-handle device/inode identity and permissions before every download and before publication; fail if the directory was replaced, moved, or made unsafe. The lock coordinates participating server processes; it is not protection against another program running as the same user. Network filesystems and same-user hostile filesystem changes are outside the supported storage model.
-
-Startup codes specific to the feature: `configuration_attachment_downloads_invalid`, `configuration_download_directory_unsafe`, and `configuration_download_directory_in_use`. Malformed JSON/unknown fields use the existing generic configuration code. Emit fixed codes only, without paths or native error text.
 
 ## Attachment discovery and identity
 
@@ -134,16 +120,11 @@ Keep MCP tool-error semantics with fixed snake-case codes and no path/content de
 
 If MailKit discards an unexpected-UID literal without committing it, a missing-stream guard rejects the response as `protocol_failure` instead of treating it as absence. A malformed IMAP response/disconnection still follows the existing Bridge/protocol error categories rather than inventing a precise MIME failure. A supplied ineligible container identifier can produce `attachment_unsupported` even though discovery returns null for that entry. Missing/unsafe storage and cleanup failures must be tested independently from network failures.
 
-## Implementation shape and sequence
+## Implementation responsibilities
 
 Keep one application project and one xUnit project. Add immutable request/result DTOs and `DownloadAttachmentAsync` to the small `IReadOnlyMailbox` interface. Inject one narrowly scoped private-download store into the adapter for directory validation, quotas, temporary-file ownership and publication; do not introduce a repository, database, or general storage framework. MailKit objects and MIME transfer decoding stay inside `Mail/`; only DTOs cross to `Tools/`. The native directory-entry reader requires a 64-bit Linux process. Reuse protected-handle primitives without weakening validation of configuration, credentials, or certificate files.
 
-1. **Configuration and storage.** Implement optional settings and lifetime directory ownership/lock, protected creation, quota reservation, exclusive publication, and cleanup. Add focused filesystem tests using synthetic private temporary directories. Keep the tool disabled until integration is complete.
-2. **Identity and bounded retrieval.** Implement attachment eligibility/IDs, DTOs, scoped stream budgets, strict byte decoding, and adapter download flow. Preserve the body path and its cap. Refactor session completion only enough to allow publication after logout and before gate release; do not publish inside the current callback and then run the existing post-logout cancellation check.
-3. **Protocol safety.** Add real-adapter scripted TLS/IMAP tests for eligible parts, top-level/nested section addressing, fresh identity/policy checks, byte integrity and all failure/cancellation paths. Verify actual commands and bounded allocation behavior using the pinned libraries.
-4. **MCP integration.** Register the fourth tool only when configured, add nullable metadata IDs, strict input/output schemas, fixed error codes and accurate annotations. Add SDK process tests for discovery, results, disk effects, sanitization, EOF/cancellation and recovery.
-5. **Documentation and synthetic verification.** Update DESIGN, SECURITY, AGENTS, CONFIGURATION, USAGE, TESTING, README, BACKLOG, and PLAN to describe implemented behavior only when it exists. Add optional settings to example guidance without enabling downloads by default. Run the locked restore, Release build, full non-live suite, and documentation checks from [DEVELOPMENT.md](DEVELOPMENT.md). Keep SDK/package pins unless a separately reviewed dependency change is required.
-6. **Client and Bridge acceptance.** First use a synthetic PDF and the intended local client to verify that the returned path can actually be read by its document tools. Separately, with explicit operator authorization and external fixtures, extend/run live acceptance to verify attachment hashes and unchanged message membership/flags. Record exact versions and limitations; leave unrun acceptance unchecked.
+The original [implementation sequence](archive/IMPLEMENTATION-HISTORY.md#attachment-implementation-sequence) is archived; current verification requirements follow.
 
 ## Acceptance matrix
 

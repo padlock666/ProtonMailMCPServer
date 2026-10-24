@@ -1,10 +1,10 @@
 # Message search pagination
 
-Status: implementation requested on 2026-10-21. The adapter and MCP contracts implement this design; synthetic verification evidence is recorded in PLAN.md. Live Bridge pagination acceptance remains pending. This document extends the [approved design](../DESIGN.md); [PLAN.md](../PLAN.md#message-search-pagination--design-requested-2026-10-21) tracks the implementation checklist. Existing mailbox [security boundaries](../SECURITY.md) remain mandatory.
+Detailed cursor format, adapter algorithm and acceptance requirements extending [DESIGN.md](../DESIGN.md). See [USAGE.md](USAGE.md#tool-inputs-and-results) for client calls and [PLAN.md](../PLAN.md#search-pagination) for status/evidence; [SECURITY.md](../SECURITY.md) remains mandatory.
 
 ## Outcome and scope
 
-Let a caller traverse matching messages in one permitted folder through successive `search_messages` calls. Preserve descending UID order, existing filters, default page size 20, maximum page size 50, and the three existing MCP tools. A caller that omits pagination inputs continues to receive the first page.
+Let a caller traverse matching messages in one permitted folder through successive `search_messages` calls. Preserve descending UID order, existing filters, default page size 20, maximum page size 50, and the three base MCP tools; attachment downloads remain separately configurable. A caller that omits pagination inputs continues to receive the first page.
 
 Use a forward-only cursor based on an exclusive UID boundary. Each page is a new serialized, read-only mailbox operation with its own connection and existing 30-second deadline. There are no page numbers, offsets, previous-page tokens, total counts, cross-folder results, retained result sets, new configuration, or new package dependencies. A client can retain earlier pages itself.
 
@@ -100,13 +100,13 @@ Pagination bounds returned summaries and summary fetches per call. The ordinary 
 | Policy and identity | Allowlist and AllExcept checks on every page, denied request before connection, rejected resolved-name mismatch, stale UIDVALIDITY before UID search/fetch, missing folder; no cursor bypass of policy |
 | Wire safety | Actual pinned adapter uses EXAMINE and UID search with the finite range, fetches only selected UID summaries, and admits no mutation/body-fetch/CLOSE commands; retain existing PEEK regressions for get_message |
 | Failure and recovery | Cancel while queued/searching/fetching/logging out, timeout, rejected search/fetch, malformed reply, broken socket, and fresh successful call afterward; no success cursor on failure |
-| MCP contract | Exactly three tools, strict optional cursor schema and 98-character bound, nullable nextCursor, invariant with truncated, equivalent structured/text JSON, legacy first-page calls, multi-page SDK calls, sanitized stderr and protocol-only stdout |
+| MCP contract | Exactly three base tools (four when downloads are configured), strict optional cursor schema and 98-character bound, nullable nextCursor, invariant with truncated, equivalent structured/text JSON, legacy first-page calls, multi-page SDK calls, sanitized stderr and protocol-only stdout |
 | Live compatibility | Separately authorized read-only traversal of an operator-prepared dedicated folder at a small page size; compare full expected UID membership and persistent flags before/after; record tested versions without mailbox values |
 
 The live fixture already allows 2–50 messages, so using `limit: 1` exercises continuation without broadening its manifest limits or policy. Its read stage now traverses each unfiltered/unread/read result at `limit: 1`, retaining the existing opt-in gate and checking expected identities. Do not mutate live fixtures to test races; those cases belong in synthetic scripts. Synthetic passing results do not establish Bridge compatibility, and unrun live acceptance leaves the MVP incomplete.
 
 ## Implementation touchpoints
 
-The implementation adds optional cursor to `SearchRequest` and nullable next cursor to `SearchResult` in `Contracts/MailContracts.cs`; retains the three methods in `Mail/IReadOnlyMailbox.cs`. A small internal codec beside the mail adapter retains only the process key. `Mail/MailKitMailbox.cs` validates cursors, restricts UID ranges, and advances from selected candidates. The codec uses the existing singleton dependency-injection lifetime.
+The implementation adds optional cursor to `SearchRequest` and nullable next cursor to `SearchResult` in `Contracts/MailContracts.cs`; uses the existing `SearchAsync` method in the four-method `Mail/IReadOnlyMailbox.cs` interface. A small internal codec beside the mail adapter retains only the process key. `Mail/MailKitMailbox.cs` validates cursors, restricts UID ranges, and advances from selected candidates. The codec uses the existing singleton dependency-injection lifetime.
 
 `Tools/MailboxTool.cs` exposes cursor input mapping, schema bounds, result schema, and pagination guidance. Unit, Protocol, Mcp, and gated LiveBridge suites cover the extension. Package versions/locks, configuration, and launch behavior are unchanged. See PLAN for actual verification results; the live suite extension is not live acceptance evidence until explicitly run.

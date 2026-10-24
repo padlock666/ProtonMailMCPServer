@@ -1,58 +1,43 @@
 # Test strategy
 
-Status: Phases 1–3 include configuration/MIME unit tests, category discovery, actual-adapter TLS/IMAP protocol tests, and official SDK tool-contract/stdio process tests. An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. That run exercised the former internal-date filter. The replacement sender-date search has synthetic coverage only; live sender-date matching, body retrieval, state preservation, failure/recovery, and version-specific compatibility remain unverified. The explicit opt-in live suite is implemented but has not been run against Bridge. Acceptance criteria are tracked in [PLAN.md](../PLAN.md). Safety requirements are in [SECURITY.md](../SECURITY.md).
+Use one xUnit project with `Unit`, `Protocol`, `Mcp` and gated `LiveBridge` categories. Standard tests use synthetic data and require no Proton account, personal credentials or running Bridge. [SECURITY.md](../SECURITY.md) defines mandatory controls; [PLAN.md](../PLAN.md) records evidence and pending live acceptance.
 
-Use one xUnit project with distinct unit, protocol, MCP process, and live Bridge groups. Unit/protocol/process tests use synthetic messages and must run without a Proton account, personal credentials, or a running Bridge instance.
+## Coverage and limitations
 
-## Unit tests
+Test observable behavior; mocks of `IReadOnlyMailbox` are suitable for tool mapping only and cannot prove read-only adapter behavior.
 
-Search-pagination requirements are specified in the [acceptance matrix](SEARCH-PAGINATION.md#acceptance-matrix) and [implementation checklist](../PLAN.md#message-search-pagination--design-requested-2026-10-21). `SearchCursorTests` checks authenticated encoding and query binding. `SearchPaginationTests` runs the actual adapter through full chains above 50 matches, empty/exact/overflow counts, sparse/extreme UIDs, disappearing candidates, replay/unread changes, policy/epoch errors, finite ranges, and cancellation/recovery. SDK process tests check discovery, full traversal through an empty page, errors, and restart invalidation. Actual commands/results are recorded in PLAN; live traversal remains unverified.
+| Area | Coverage and fixtures |
+| --- | --- |
+| Configuration and policy (`Unit`, `Protocol`, `Mcp`) | Strict fields/types, both folder modes and legacy compatibility, INBOX/exact-name rules, denied direct calls, namespace/unsubscribed/new-folder discovery, duplicate/nonselectable/missing folders and listing overflow/recovery |
+| Protected files/storage (`Unit`) | Open-handle ownership/modes, private parents, trusted ancestors, symlinks, FIFOs/directories, replacement races, certificate format/dates, safe diagnostics; download locks, quotas, hard links, no-overwrite publication, cleanup and strict decoder boundaries |
+| Search and identity (`Unit`, `Protocol`, `Mcp`) | AND filters, To/Cc, unread tri-state, sender-date boundaries and differing internal dates, UID ordering, default/max limits, missing UIDs and stale UIDVALIDITY |
+| Pagination (`Unit`, `Protocol`, `Mcp`) | `SearchCursorTests` and `SearchPaginationTests`: binding/tampering/restart, chains above 50 matches, empty/exact/overflow pages, sparse/extreme UIDs, vanished candidates, arrivals/unread changes, finite ranges, policy/epoch errors and recovery; see the [acceptance matrix](SEARCH-PAGINATION.md#acceptance-matrix) |
+| MIME/body (`Unit`, `Protocol`) | Plain/HTML and alternative/related selection; attached text/messages excluded; strict transfer/charset decoding, missing/malformed/unsupported bodies, advertised/actual literal caps, metadata/control/surrogate bounds and output truncation; inert links/images |
+| Downloads (`Unit`, `Protocol`, `Mcp`) | `DownloadStorageTests` and `AttachmentDownloadTests`: top-level/nested parts, eligibility and IDs, restart/repeats, byte/hash/path handoff, malformed encodings, exact/overflow limits, unsolicited UID/section/offset/duplicate literals and missing payloads; retain body-only attachment exclusion; see the [acceptance matrix](ATTACHMENT-DOWNLOADS.md#acceptance-matrix) |
+| MCP process (`Mcp`) | Official SDK child-process initialization/discovery, exactly three/four tools, strict schemas/annotations, structured/text result equivalence, content statuses, input rejection before I/O, fixed runtime errors, cancellation/recovery, protocol-only stdout and sanitized stderr |
+| Concurrency and failure (`Protocol`, `Mcp`) | Queued/in-flight cancellation, production deadline, stalled logout, malformed/rejected commands, broken sockets, gate release and a fresh successful connection; EOF/shutdown behavior below |
 
-Exercise observable behavior rather than duplicating method implementations:
+## Protocol and process verification
 
-- Legacy and explicit allowlist enforcement, explicit AllExcept opt-in (including empty exclusions), invalid/mixed policy rejection, case rules for INBOX, and exact names without implicit descendants.
-- Configuration and protected-file validation: missing/invalid fields, non-loopback host, unsafe ownership/permissions for the JSON, certificate, and password, symlinked files or ancestors, writable ancestors, invalid certificates, and redacted failures.
-- Search AND semantics, recipient To/Cc matching, unread tri-state, sender-date bounds (`SENTSINCE`/`SENTBEFORE`), invalid ranges, default/max limits, descending UID results, and truncation.
-- Folder + UIDVALIDITY + UID identity, stale epoch rejection, and missing message behavior.
-- Main-body choice for plain, HTML-only, multipart alternative, related inline images, attached text, and nested attached messages.
-- HTML text conversion without rendering, remote requests, script execution, or attachment traversal.
-- Empty/malformed MIME, invalid encodings, missing optional metadata, oversized bodies, actual-versus-advertised transfer size, and 32,000-character output truncation.
-- Sanitized error mapping and cancellation propagation; distinguish a failure from an empty successful result.
+`Fixtures/ScriptedImapServer.cs` runs the actual `MailKitMailbox` on ephemeral loopback ports with generated test-only TLS certificates and synthetic settings/messages. Ordered scripts admit only expected commands/connections and require socket closure. Never reuse Bridge's listener or weaken production TLS for tests.
 
-Use a fake `IReadOnlyMailbox` for tool mapping tests only. It cannot prove the real adapter is read-only.
+Require pin validation before authentication in both TLS modes, EXAMINE with confirmed read-only access, UID addressing, BODYSTRUCTURE before selected-part PEEK, and safe logout/disposal without CLOSE, expunge or mutation. Verify these on success, rejection, stale/missing references, oversized responses, cancellation and disconnect. No full-message fetch is allowed. Capture synthetic traffic for assertions; never enable production protocol logging.
 
-## IMAP protocol integration tests
+Launch the built application through the pinned official SDK client, keeping build banners out of stdout. Capture stdout/stderr separately; parse stdout as MCP JSON and require diagnostics to contain only operation, correlation ID, duration and fixed outcome, excluding sentinel secrets and sensitive fixture fields. Check schema behavior rather than snapshotting entire generated descriptions. Tests cover default initialization and handshake revision `2025-11-25`.
 
-The implemented [attachment-download contract](ATTACHMENT-DOWNLOADS.md#acceptance-matrix) has synthetic coverage for private-filesystem/retention tests, attachment byte/hash checks, conditional fourth-tool discovery, download-only PEEK and transfer limits, and synthetic client PDF handoff. Existing `get_message` tests must continue to prove attachment-payload exclusion. The live download stage requires explicit additional authorization for retained plaintext and operator-prepared expected hashes; ordinary live reads remain metadata-only.
+## Environment and evidence limits
 
-Build a scripted loopback IMAP fixture that runs the actual MailKit adapter against expected requests/responses. Use dedicated ephemeral ports, synthetic messages, and test-only TLS certificates. Do not reuse a user's Bridge listener or modify production TLS policy for tests.
+Linux is required, including `statx` and `mkfifo` for special-file fixtures. Restricted runners may need MSBuild/compiler/VSTest IPC and synthetic loopback permission; this does not authorize Bridge access. Synthetic files/certificates are temporary. Foreign-owner integration needs privileges and is not exercised. Native disk-full/flush fault injection, forced process-kill timing, privileged ownership cases and network-filesystem compatibility are not claimed as tested; supported download storage is local 64-bit Linux.
 
-The fixture should admit only expected commands and fail on unexpected commands. Verify:
+The fixture lifetime is 60 seconds so tests can observe the unchanged production 30-second deadline. A controlled clock checks that the deadline starts before queue acquisition and that queued timeout cannot release another operation's gate. No production deadline override or test-only host flag is exposed.
 
-1. Connection negotiation, certificate pinning, required STARTTLS/TLS-on-connect, and authentication ordering.
-2. `EXAMINE` with confirmed read-only access for every selected folder; rejection rather than read/write fallback when the server misbehaves.
-3. UID-based search/summary/body retrieval and `BODY.PEEK` for all content reads.
-4. Body-structure-first retrieval; `get_message` downloads only its selected text part; `download_attachment` fetches only the resolved eligible attachment section. No full-message fetch.
-5. Safe logout/disposal with no mutating command or expunging close, including messages already flagged deleted.
-6. No access to denied folders and no retrieval after UIDVALIDITY mismatch.
-7. Certificate mismatch, expired/not-yet-valid pins, missing STARTTLS, wrong credentials, malformed responses, vanished UIDs, abrupt disconnect, and mid-transfer cancellation.
-8. Serialized concurrent calls, cancellation while queued, deadline expiry, gate release, and a fresh usable connection on the next call.
-9. Result and transfer limits, including a response larger than advertised.
+SDK byte/path handoff establishes local transport, not PDF interpretation by the intended client. Synthetic protocol tests establish pinned MailKit behavior, not live Bridge compatibility or persistent flag preservation. MailKit metadata parsing and matching-UID materialization remain outside constant-memory guarantees.
 
-Capture synthetic wire traffic for assertions. Do not add production protocol logging as a testing convenience. The forbidden-command examples in [SECURITY.md](../SECURITY.md) are a review aid, not a substitute for expected-command checks.
+## Cancellation and shutdown
 
-## MCP process tests
+The SDK regression sends explicit `notifications/cancelled` for a known request ID using `McpClient.SendMessageAsync`, awaits cancellation and requires a successful subsequent call within five seconds. Cancelling a high-level SDK call's local token did not reliably deliver remote cancellation in this environment; a cancelled local await is not cleanup evidence.
 
-Launch the built executable as a child process through the official MCP SDK client, with a temporary synthetic configuration and IMAP fixture. Keep build output out of the protocol stream by launching the built artifact, not an interactive build command.
-
-- Verify initialization, clean shutdown, and discovery of exactly three base tools when downloads are omitted and four tools when configured.
-- Assert names, descriptions, input/output schemas, and read-only/non-destructive annotations.
-- Call each tool end-to-end; check summaries, message identities, text, attachment metadata, and content/truncation status.
-- Exercise invalid inputs, denied folders, stale UIDs, missing messages, outages, authentication/TLS failures, timeouts, and cancellation.
-- Confirm execution errors use tool-error semantics and do not leak raw exception text.
-- Capture stdout and stderr separately. Stdout contains only valid MCP traffic; diagnostic output excludes synthetic sentinel secrets and sensitive field values.
-
-Test contract behavior rather than snapshotting entire SDK-generated descriptions unless the exact schema is deliberately part of the interface.
+Raw stdio tests exercise complete results and stdin EOF during stalled LOGOUT for reads/downloads. EOF drains the active operation under its existing 30-second deadline, then exits; immediate cancellation is not promised. Ordinary download cleanup leaves no completed/temporary file before publication. Process termination closes sockets; no CLOSE/expunge is admitted. Crash leftovers and publication/response-loss semantics remain as defined in the download contract.
 
 ## Opt-in real Bridge acceptance
 
@@ -76,13 +61,7 @@ No automatic fixture cleanup is permitted. The operator manages the test mailbox
 
 The xUnit project uses a `Category` trait: `Unit`, `Protocol`, `Mcp`, and `LiveBridge`. Every test must have one category, with a discovery check to prevent unclassified tests bypassing the live exclusion. Live tests also require an explicit opt-in flag and external configuration; selecting the category alone must not discover credentials or contact a mailbox.
 
-Run from the repository root:
-
-```bash
-dotnet restore ProtonMailMcp.slnx --locked-mode
-dotnet build ProtonMailMcp.slnx --configuration Release --no-restore
-dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge'
-```
+Use the canonical [build and synthetic test commands](DEVELOPMENT.md#build-and-test-workflow) from the repository root.
 
 The live test is `LiveAcceptance.OperatorPreparedFolderPreservesState`. Category selection without authorization skips it before settings are loaded. Every invocation also checks authorization at runtime. No endpoint/credential discovery occurs. Do not run it until the operator supplies configuration and explicitly authorizes access.
 
@@ -135,47 +114,8 @@ Keep opt-in variables scoped to a single command. Do not export them globally or
 
 For dependency changes, update the lock file intentionally before validating locked restore. For MailKit changes rerun protocol tests; for Bridge compatibility rerun live acceptance. Record actual results and any skipped tests in [PLAN.md](../PLAN.md).
 
-## Phase 1 coverage and limitations
 
-Synthetic fixtures generate temporary public PEM/DER certificates and a fake password in a private directory. No checked-in credentials or certificates are needed. Tests cover required fields, strict loopback addresses, required TLS modes, allowlists, bounded files, certificate dates/formats, private modes/parents for all three local files, symlinked files and ancestors, writable ancestors, directories/FIFOs, opened-handle replacement, cancellation, and sanitized diagnostics. Owner UID is checked on opened file and directory handles; a foreign-owner integration case is not exercised because it would require ownership-changing privileges.
-
-The official SDK client initializes the child process without a mailbox service. A separate process test parses captured stdout as MCP traffic and checks stdin-EOF shutdown, exit codes, and empty stderr on success. Startup failures produce only fixed stderr codes. Category discovery rejects missing, duplicate, and unknown categories. Phase 2 adds `Protocol` tests; Phase 4 adds the separately gated `LiveBridge` test. The initialization-only process tests establish neither tool contracts nor real Bridge compatibility.
-
-Linux is required for the suite, including `mkfifo` for a synthetic special-file regression. Some restricted runners block VSTest's local control socket and MSBuild/compiler IPC; grant runner IPC permission or use an environment that permits it. This does not authorize Bridge access.
-
-## Phase 2 coverage and limitations
-
-`Fixtures/ScriptedImapServer.cs` listens only on an ephemeral loopback port and generates an isolated synthetic TLS certificate. Ordered session scripts admit exact expected commands, then require socket closure; extra commands or connections fail. Tests execute the actual `MailKitMailbox`, not a mock of `IReadOnlyMailbox`. MailKit's initial namespace/INBOX metadata discovery is included in each authenticated script; only selectable folders permitted by the configured policy are returned and only permitted folders may be opened.
-
-Protocol evidence covers both required TLS modes, peer pin mismatch/expiry/future validity, absent STARTTLS, authentication rejection, EXAMINE with read-only confirmation, rejection of READ-WRITE or failed EXAMINE, UID-only retrieval, body-structure-first selection, top-level `BODY.PEEK[TEXT]`, nested PEEK sections, attachment-only/unsupported/missing bodies, attachment metadata caps, exact 1 MiB transfers, oversized advertised and actual literals, and output truncation. Search fixtures verify default 20/maximum 50 summaries, descending UIDs, AND filters, To/Cc OR semantics, sender-date bounds, one-sided ranges, and differing synthetic sender/internal dates, unread tri-state, absent metadata, and empty results.
-
-Failure scripts require disposal without CLOSE or any unrequested command, then verify a fresh successful connection. They cover stale/missing/vanished UIDs, malformed protocol replies, rejected fetches, broken sockets, cancellation during a partial literal, cancellation while queued, search timeout, and stalled logout. A controlled deadline clock verifies the production 30-second timer is armed before gate acquisition and that a queued timeout does not release another operation's gate. Pending-connection checks verify queued callers cannot start a concurrent session.
-
-MIME unit tests cover alternative/related primary-body selection, attached text and nested-message exclusion, plain/HTML conversion, empty content, strict UTF-8 and legacy charset handling, malformed transfer encodings, output/control/surrogate bounds, and bounded stream writes. HTML links/images remain data; the conversion contains no renderer or network client. Protocol responses and all credential strings are synthetic and are never produced by application logging.
-
-No Proton account, personal data, Bridge endpoint, or operator credentials are used. These tests establish pinned MailKit behavior against the scripts, not real Bridge compatibility or persistent flag preservation on Bridge. Phase 4 remains incomplete. Search result UID sets and MailKit metadata parsing are not promised constant-memory for arbitrarily large mailboxes; transfer and returned-result caps still apply.
-
-## Folder policy regression coverage
-
-Synthetic configuration tests cover both explicit modes, legacy compatibility, required/empty/null lists, mixed formats, unknown/duplicate fields, exact names, INBOX case handling, wildcards, and list/name limits. Actual-adapter scripts cover namespace enumeration, selectable unsubscribed labels, new folders on later calls, duplicate/nonselectable/nonexistent entries, Unicode names, the 4,096-folder output boundary and overflow recovery, excluded search/direct reads before connection, unexpected lookup responses, read-only UID/PEEK access to a new label, and rejected/broken/cancelled discovery followed by a fresh connection. MCP process tests use both explicit modes across all three tools and assert sanitized stderr; startup tests reject mixed policies with no stdout. The live manifest gate requires allowlist mode and a dedicated folder.
-
-These regressions use synthetic fixtures only. AllExcept discovery and label behavior have not been verified against real Bridge; the existing live suite remains restricted to its dedicated allowlist and does not establish broad-discovery compatibility.
-
-## Phase 3 coverage and limitations
-
-`Mcp/ToolTests.cs` launches the built application through the official 2.2.0 SDK client with temporary synthetic settings pinned to `ScriptedImapServer`. Discovery checks exactly the approved names, descriptions, read-only/non-destructive annotations, strict input schemas, required/optional arguments, output properties and content-status spellings. Calls exercise the actual adapter, structured/text result agreement, absent summary fields, complete message identity, filters, unread tri-state, successful empty searches, attachment metadata and truncation, content statuses, and body truncation.
-
-Input failures are tested before any fixture connection. Runtime fixtures cover denied folders, stale epochs, missing messages/folders, rejected authentication, certificate mismatch, protocol rejection, broken connections, an unavailable ephemeral endpoint, and the real production 30-second deadline. Recovery requires a fresh successful connection. The fixture lifetime is 60 seconds to permit the real deadline test; verification still requires ordered commands and socket closure. No production deadline override or test-only server startup flag is exposed.
-
-The SDK cancellation regression sends an explicit `notifications/cancelled` for a known request ID through `McpClient.SendMessageAsync`, asserts the pending SDK request is cancelled, and requires a successful subsequent call within five seconds. Merely cancelling the high-level SDK call's local token did not reliably deliver server cancellation in this environment; do not infer prompt remote cleanup from a cancelled local await. Received cancellation notifications propagate to the adapter. Captured raw stdio tests cover complete tool results and stdin EOF during a stalled LOGOUT: EOF drains the active operation under its existing 30-second deadline, then exits cleanly. It does not promise immediate cancellation on EOF. Child-process termination also closes its sockets; no CLOSE/expunge command is admitted.
-
-SDK client process tests use the initialize-handshake revision `2025-11-25`; the existing default-options client initialization/discovery test is retained as well. Every captured tool diagnostic must match a fixed grammar of operation/correlation/duration/outcome, excluding sensitive fixture values. Separate stdout capture parses every line as MCP JSON and checks the result. Package versions and locks remain unchanged; folder-policy adapter changes are covered above. These tests establish the MCP contracts and pinned adapter behavior against synthetic scripts, never Bridge compatibility or live flag preservation.
-
-## Attachment-download verification and live stage
-
-`DownloadStorageTests` exercises private configuration/handle paths, directory locking, root replacement/mode changes, symlinks/hard links, generated `0600` files, collision/no-overwrite behavior, quotas including sparse/crash files, temporary identity replacement and strict decoder boundaries. `AttachmentDownloadTests` uses the real adapter with ordered TLS/IMAP scripts for top-level/nested PDFs, metadata IDs, restart/repeat downloads, missing/stale/denied/ineligible references, supported/invalid encodings, exact wire cap and decoded overflow, unsolicited UID/section/offset/duplicate literals, missing payloads, cancellation and recovery. Existing body-only PEEK regressions remain required.
-
-SDK process tests cover conditional fourth-tool discovery, strict schemas and annotations, byte/hash/path handoff, input and sanitized runtime errors, cancellation notifications and recovery. Raw stdout/EOF tests cover downloads as well as existing tools: stdout stays MCP JSON; EOF during stalled logout drains to the existing deadline and leaves no completed/temporary download on ordinary cleanup. Successful SDK file reads verify local byte transport, not a particular model's PDF understanding.
+## Attachment-download live stage
 
 The optional live `downloads` stage requires **both** `PROTONMCP_LIVE=I_AUTHORIZE_READ_ONLY_BRIDGE_TESTS` and `PROTONMCP_LIVE_DOWNLOADS=I_AUTHORIZE_LOCAL_ATTACHMENT_FILES`, plus `PROTONMCP_LIVE_STAGE=downloads`, the existing external settings/manifest paths, and an operator-prepared private `AttachmentDownloads.Directory`. Authorization is checked before loading settings. The directory must be outside the checkout; existing dedicated-folder/known-membership rules remain mandatory. Add these fields to the external fixture manifest, using independently known values:
 

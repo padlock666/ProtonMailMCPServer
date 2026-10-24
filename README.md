@@ -2,7 +2,7 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** Phases 1–3 implemented: .NET 10 foundation and a read-only MailKit adapter verified with synthetic TLS/IMAP fixtures. The three base tools and optional attachment-download tool are registered and tested through the official SDK client. An operator-performed real Bridge smoke test succeeded on 2026-10-18 for initialization, tool discovery, folder listing, and date-range search. Full live acceptance remains pending. See [PLAN.md](PLAN.md) for evidence and remaining phases. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
+**Status:** The three base tools and optional attachment downloads are implemented and synthetically tested. Full Bridge acceptance and intended-client PDF interpretation remain pending. See [PLAN.md](PLAN.md) for evidence and outstanding checks.
 
 ## Configuration and usage
 
@@ -33,10 +33,11 @@ The opt-in [attachment-download tool](docs/ATTACHMENT-DOWNLOADS.md) saves origin
 | [Search pagination](docs/SEARCH-PAGINATION.md) | Implemented search cursors, mailbox-change behavior, and acceptance criteria; live verification pending |
 | [Attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) | Implemented private-directory downloads, storage/retention rules and pending client/live acceptance |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
-| [BACKLOG.md](BACKLOG.md) | Requested future features and proposals awaiting implementation scope |
+| [BACKLOG.md](BACKLOG.md) | Deferred proposals requiring scope agreement |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and mandatory safety controls |
 | [Testing guide](docs/TESTING.md) | Automated checks and opt-in Bridge acceptance tests |
-| [Development guide](docs/DEVELOPMENT.md) | Intended setup, development workflow, and handoff prompts |
+| [Development guide](docs/DEVELOPMENT.md) | Build/test commands, dependency maintenance and debugging |
+| [Implementation history](docs/archive/IMPLEMENTATION-HISTORY.md) | Archived authorizations, completed checklists and verification evidence |
 
 Start with `AGENTS.md`, then `PLAN.md`. For an implementation task, read the linked design, security, and testing requirements before editing code.
 
@@ -54,4 +55,4 @@ The server receives decrypted mail from Bridge. The configured policy controls e
 
 ## Next step
 
-Follow [Linux/Bridge setup](docs/LINUX-SETUP.md) and the [opt-in acceptance procedure](docs/TESTING.md#opt-in-real-bridge-acceptance). Phase 4 tooling and documentation are implemented; live acceptance and MVP completion remain unverified.
+Follow [Linux/Bridge setup](docs/LINUX-SETUP.md) and the [opt-in acceptance procedure](docs/TESTING.md#opt-in-real-bridge-acceptance). Current acceptance gaps are tracked in [PLAN.md](PLAN.md).

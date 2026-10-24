@@ -1,6 +1,6 @@
 # Security boundaries
 
-This is a security design and implementation checklist. Phases 1–3 implement configuration/secret validation, connection-scoped TLS pin enforcement, and read-only mailbox controls with synthetic protocol and official SDK process evidence. A manual real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; live persistent flag/membership preservation and failure-path safety remain unverified. Implementation evidence is in [PLAN.md](PLAN.md). That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](docs/USAGE.md) for the updated inputs.
+Mandatory trust boundaries and controls. Implementation evidence and pending live acceptance are tracked in [PLAN.md](PLAN.md); operator settings and file requirements are in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Assets and trust model
 
@@ -64,23 +64,21 @@ Production logs may contain operation name, correlation ID, duration, and saniti
 
 Search [pagination](docs/SEARCH-PAGINATION.md) applies these controls on every page. The server validates fixed-length, query-bound HMAC cursors before connecting, rechecks the configured folder policy, and rejects stale folder epochs before search/fetch. A random process-lifetime key authenticates cursors; no issued-token registry, search cache, or persistent key is retained. Restart invalidates cursors. Tokens are authenticated rather than encrypted and contain decodable UID metadata; exclude cursors, keys, and decoded fields from logs/errors. Cursor possession never grants folder access. Synthetic tests establish protocol behavior; live pagination/flag preservation remains unverified.
 
-Maximum folder results: 4,096, with control-free full names of at most 1,024 characters; exceeding the count fails without partial output. MailKit namespace metadata parsing is not promised constant-memory. Maximum search results per page: 50, default 20; cursor input is exactly 98 canonical base64url ASCII characters when supplied. Each page may still materialize all matching UIDs in its remaining range; pagination does not promise constant-memory search. Maximum selected text-part transfer: 1 MiB, checked both before fetch and during transfer. Maximum returned body: 32,000 characters. Attachment metadata is capped at 100 entries with an explicit truncation flag; subject/address fields at 4,096 characters, filenames at 1,024, and MIME types at 256. Deadline: 30 seconds including queue time. Stop processing on client cancellation; release the serialization gate and dispose the connection safely.
+Enforce the fixed [tool/metadata limits](docs/USAGE.md#mailbox-functionality-and-limits), [configuration limits](docs/CONFIGURATION.md), and [download quotas](docs/ATTACHMENT-DOWNLOADS.md#limits-and-retention). Folder overflow fails without partial output. MailKit namespace/metadata parsing and matching-UID materialization are not constant-memory. The 30-second deadline includes queue time; client cancellation must release the gate and dispose the connection safely.
 
 Do not buffer an entire message or attachment to enforce a body-only limit afterward. Bound MIME/conversion work and return explicit metadata-only content status if the selected body cannot be read safely. Keep failures distinct from successful empty searches.
 
 Message text, HTML, headers, filenames, and metadata can contain prompt injection, control characters, links, and misleading instructions. They are untrusted tool data. Descriptions should state that boundary, but the server cannot enforce the downstream model's behavior. Never render HTML, retrieve remote resources, execute mail content, or use filenames as filesystem paths.
 
-## Live testing and maintenance
+## Attachment-download boundary
 
-### Attachment-download boundary
-
-The owner requested the [attachment-download design](docs/ATTACHMENT-DOWNLOADS.md) on 2026-10-21. Implementation was authorized later the same day, adding a narrow exception to metadata-only retrieval and no local mail exports: an explicitly configured tool may save one eligible attachment as a private local file. The tool is implemented; live access remains separately authorized. All existing mailbox mutation, folder-policy, TLS, UIDVALIDITY and PEEK controls remain mandatory.
+Optional [attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) are the narrow exception to metadata-only attachments and no local exports: explicit private-directory configuration enables saving one eligible attachment. All mailbox mutation, policy, TLS, UIDVALIDITY and PEEK controls remain mandatory.
 
 Controls include an operator-prepared `0700` directory, handle-relative no-follow creation of `0600` files, generated names, no-overwrite atomic publication, fixed transfer/output/directory limits, and serialized operations. Downloads persist until operator cleanup; failed operations remove only their own incomplete files where possible. The tool must disclose this local side effect through its description and annotations. No document-format parsing/execution, remote resource retrieval, filesystem path chosen by the caller, or automatic deletion of completed files is allowed. See the linked design for exact limits, error/commit semantics, crash leftovers, storage assumptions and required evidence.
 
 Successful download results intentionally reveal the requested file's path and metadata to the trusted client. Paths, attachment identifiers, filenames and hashes must stay out of logs and errors. The live download stage requires additional explicit opt-in for local plaintext retention; the existing live read stage stays metadata-only. Client access to returned paths and real Bridge flag preservation require separate acceptance evidence.
 
-### Existing live-testing requirements
+## Live testing and maintenance
 
 Real-mail validation is explicit opt-in using externally supplied configuration and an operator-prepared folder. Standard automated tests must never auto-discover or connect to Bridge. The live suite must not send, seed, alter, or clean up mail.
 

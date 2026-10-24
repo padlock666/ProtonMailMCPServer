@@ -1,6 +1,6 @@
 # Linux and Bridge handoff
 
-Phase 4 tooling is implemented. An operator-performed real Bridge folder-listing and date-range search smoke test succeeded on 2026-10-18; versions were not supplied for that run, and no Linux/Bridge combination has full live acceptance evidence yet. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) before claiming compatibility. The synthetic suite needs no Bridge installation. That test used the former internal-date filter; sender-date filtering now replaces it and awaits live verification. See [usage](USAGE.md) for the updated inputs.
+Prepare Bridge and local files using this guide, then follow [USAGE.md](USAGE.md) to launch the server. Full live acceptance remains pending in [PLAN.md](../PLAN.md); the synthetic suite needs no Bridge installation.
 
 ## Prepare Bridge and external files
 
@@ -27,8 +27,6 @@ For DER add `-inform DER`. Verify the file came from the intended Bridge instanc
 
 When the peer changes, stop the MCP process, independently confirm the reason in the operator-managed Bridge installation, re-export its public certificate, review the replacement locally, update `CertificateFile` or its contents, and restart the MCP process. Re-run explicitly authorized acceptance stages. Expired or future certificates also fail closed; verify the system clock and certificate dates. Never disable pinning, enable plaintext, accept all certificates, or use read/write selection to resolve a compatibility failure.
 
-## Operator work still required
+## Live acceptance preparation
 
-Prepare the dedicated folder, known UIDVALIDITY/UID identities and full membership/flags manifest using a separate trusted client with read-only inspection. Prepare plain text and HTML-only fixtures with known expected converted text, unread/read examples, an attachment example, and a pre-existing deleted flag if Bridge supports it. Pause other clients/rules and wait for sync. See [the live procedure](TESTING.md#opt-in-real-bridge-acceptance) for exact schema, stages, unsupported-state reporting, and the manual in-flight connection-loss check. This server and its suite never prepare or clean up messages.
-
-Record actual Linux, Bridge, SDK/runtime and package versions, date, stage outcomes, unsupported states, and remaining manual checks in the evidence ledger without sensitive values. Fresh-install success, flag preservation, Bridge restart/connection-loss recovery, and MVP completion remain unverified until that work is performed.
+Follow the [exact fixture schema and stages](TESTING.md#opt-in-real-bridge-acceptance) to prepare the dedicated folder through a separate trusted client, record known identities/text hashes, pause other writers and authorize specific runs. This server and its suite never prepare or clean up live messages. Record actual versions, outcomes and unsupported states in [PLAN.md](../PLAN.md) without sensitive values.

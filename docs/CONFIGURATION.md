@@ -1,6 +1,6 @@
 # Configuration guide
 
-The server loads one external JSON configuration file at startup. This guide describes the implemented configuration contract, including explicit allowlist and all-except folder policies; see the [usage guide](USAGE.md) for launching the stdio host, three base tools and optional attachment-download tool. Live Bridge acceptance remains pending in [PLAN.md](../PLAN.md).
+The server loads one external JSON configuration file at startup. This guide owns settings, validation and protected-file requirements; [USAGE.md](USAGE.md) covers launch/tools and [PLAN.md](../PLAN.md) tracks acceptance.
 
 Omitting `AttachmentDownloads` keeps downloads disabled and preserves the three base tools. Add the optional setting below to enable a fourth tool. The default runnable example keeps downloads disabled.
 
@@ -88,7 +88,7 @@ Supply one public X.509 certificate as PEM or DER. It must be within its validit
 
 Each mailbox connection requires encrypted IMAP and an exact match to the configured certificate before authentication. A self-signed certificate can be trusted through this explicit pin; a different certificate fails even if a system certificate authority trusts it. There is no plaintext fallback, trust-on-first-use, or automatic pin replacement.
 
-When Bridge's certificate changes, verify the change independently, export the replacement public certificate, update the external file or `CertificateFile` path, and restart the server. Do not disable verification to resolve a mismatch. These controls have synthetic protocol evidence; real Bridge compatibility remains unverified.
+When Bridge's certificate changes, verify the change independently, export the replacement public certificate, update the external file or `CertificateFile` path, and restart the server. Do not disable verification to resolve a mismatch. Acceptance evidence is tracked in [PLAN.md](../PLAN.md).
 
 ## Optional attachment downloads
 
@@ -102,11 +102,11 @@ To enable `download_attachment`, create a dedicated empty directory locally outs
 }
 ```
 
-The directory must already exist, be owned by the server's effective user and have exactly mode `0700`. Its path must be absolute, control-free, at most 3,000 UTF-8 bytes, with no symlink components, `.`/`..`, doubled or trailing slashes. Ancestors follow the protected-path rules above. A directory containing the loaded settings/password/certificate files is rejected. The server validates handles, takes a process-lifetime exclusive lock and refuses a second server using the same directory. This storage implementation requires 64-bit Linux and a supported local filesystem; do not use network storage. It never creates or repairs the directory.
+The directory must already exist, be owned by the server's effective user and have exactly mode `0700`. Its path must be absolute, control-free, at most 3,000 UTF-8 bytes, with no symlink components, `.`/`..`, doubled or trailing slashes; `/` is invalid. Ancestors follow the protected-path rules above. A directory containing the loaded settings/password/certificate files is rejected. The server validates handles, takes a process-lifetime exclusive lock and refuses a second server using the same directory. This storage implementation requires 64-bit Linux and a supported local filesystem; do not use network storage. It never creates or repairs the directory.
 
 Restart after adding/removing/changing this object. Unknown/duplicate properties, null objects and absent/null directory values fail startup; omission is the only disabled form. There are no environment or caller overrides and no default download directory.
 
-Downloads use generated filenames and private `0600` files. Limits are fixed: 36 MiB encoded transfer, 25 MiB decoded file, and 250 MiB/1,000 directory entries, including incomplete files. Capacity is reserved conservatively for another full 25 MiB file. Completed files remain until you remove them; stop the server before clearing abandoned `.part` files. No automatic expiry, cleanup of completed files or overwrite is provided. Keep plaintext out of source control and unintended backup/sync locations. See [the download contract](ATTACHMENT-DOWNLOADS.md) for retention, commit/cancellation and quota details.
+Downloads use generated filenames and private `0600` files. Fixed [transfer/directory quotas](ATTACHMENT-DOWNLOADS.md#limits-and-retention) include incomplete files and reserve capacity conservatively for a full-size download. Completed files remain until you remove them; stop the server before clearing abandoned `.part` files. No automatic expiry, cleanup of completed files or overwrite is provided. Keep plaintext out of source control and unintended backup/sync locations. See [the download contract](ATTACHMENT-DOWNLOADS.md) for retention, commit/cancellation and quota details.
 
 Startup failures use fixed `configuration_attachment_downloads_invalid`, `configuration_download_directory_unsafe` or `configuration_download_directory_in_use` codes without paths. The client must be able to read the returned host path; a cloud sandbox does not automatically share this directory.
 

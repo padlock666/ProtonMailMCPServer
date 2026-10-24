@@ -1,22 +1,12 @@
 # Usage guide
 
-Optional [attachment downloads](ATTACHMENT-DOWNLOADS.md) save original bytes into a configured private directory and return paths for the local client's document tools. Enable them with [AttachmentDownloads.Directory](CONFIGURATION.md#optional-attachment-downloads).
-
-By default the server exposes three read-only MCP tools over stdio: `list_folders`, `search_messages`, and `get_message`. Phases 1–3 have synthetic automated coverage. A manual real Bridge smoke test succeeded on 2026-10-18 for initialization, discovery, folder listing, and date-range search; full live acceptance and version-specific compatibility remain pending. See [PLAN.md](../PLAN.md).
+The server exposes three read-only MCP tools over stdio: `list_folders`, `search_messages` and `get_message`. Optional `download_attachment` saves files for a client sharing the host filesystem. Full live/client acceptance remains pending; see [PLAN.md](../PLAN.md).
 
 ## Build and verify
 
-Use Linux and the .NET SDK pinned in `global.json` (currently 10.0.113, with roll-forward disabled). From the repository root:
+Use Linux and the SDK pinned in `global.json`. Run the [locked restore, Release build and synthetic tests](DEVELOPMENT.md#build-and-test-workflow) from the repository root. The suite needs no Proton account or Bridge; restore can need NuGet access and restricted runners can need IPC/synthetic loopback permission.
 
-```bash
-dotnet restore ProtonMailMcp.slnx --locked-mode
-dotnet build ProtonMailMcp.slnx --configuration Release --no-restore
-dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge'
-```
-
-The standard suite uses synthetic configuration, TLS certificates, and ephemeral loopback IMAP fixtures. It needs no Proton account, real credentials, or running Bridge. Restore may require NuGet network access. Some restricted runners must permit MSBuild/VSTest IPC and synthetic loopback sockets; see the [testing guide](TESTING.md).
-
-If the CLI reports “A compatible .NET SDK was not found”, compare `dotnet --list-sdks` with `global.json`. Roll-forward is disabled, so even a newer installed patch does not satisfy a different exact pin. Install the pinned SDK or intentionally update the pin and verify the build/tests; see the [toolchain policy](DEVELOPMENT.md#pinned-dependencies-and-verification-sources).
+If no compatible SDK is found, compare `dotnet --list-sdks` with `global.json`: roll-forward is disabled. Install the pinned SDK or intentionally update the pin and verify it under the [toolchain policy](DEVELOPMENT.md#pinned-dependencies-and-verification-sources).
 
 ## Configure the host
 
@@ -54,14 +44,15 @@ The tools call the tested adapter for permitted folder discovery, typed searches
 | Search | Sender, To/Cc recipient, subject, sender dates, unread status; cursor pagination, default 20 results per page, maximum 50, highest UIDs first |
 | Message identity | Folder full name + UIDVALIDITY + UID; stale identities are rejected |
 | Body | Primary non-attachment plain text, otherwise HTML converted to text without rendering or fetching external references |
-| Transfer/output | Selected text part at most 1 MiB; returned text at most 32,000 characters, with explicit status/truncation |
+| Transfer/output | Selected text part at most 1 MiB (1,048,576 bytes), checked before allocation and during transfer; returned text at most 32,000 characters, with explicit status/truncation |
+| Metadata | Subject/address fields at most 4,096 characters each, filenames 1,024 and MIME types 256; control characters removed; body preserves line breaks/tabs |
 | Attachments | `get_message` returns at most 100 metadata entries/IDs and a truncation flag; configured downloads save one eligible attachment at a time |
 | Connection | One encrypted connection per operation, serialized access, 30-second deadline including queue time |
 | Safety | Read-only folder selection and PEEK; no sending, flag changes, mailbox mutation, or expunging cleanup |
 
 Message content, links, and filenames remain untrusted data. A local client may forward tool results to a hosted model provider; stdio transport does not guarantee local model processing. Read [SECURITY.md](../SECURITY.md) before enabling real-mail access.
 
-Folder discovery returns at most 4,096 permitted folders and fails without a partial list if this count is exceeded. It follows the configured `Allowlist` or `AllExcept` policy; see [configuration](CONFIGURATION.md#folder-access-policy). AllExcept automatically exposes new folders and labels. Exclusions block folder access only: a message may still be returned through another permitted label/folder, including INBOX or All Mail. Folder discovery has no pagination arguments; search cursors are described below.
+Folder discovery returns at most 4,096 permitted folders with nonblank, control-free full names of at most 1,024 characters; overflow fails without a partial list. It follows the configured `Allowlist` or `AllExcept` policy; see [configuration](CONFIGURATION.md#folder-access-policy). AllExcept automatically exposes new folders and labels. Exclusions block folder access only: a message may still be returned through another permitted label/folder, including INBOX or All Mail. Folder discovery has no pagination arguments; search cursors are described below.
 
 ## Tool inputs and results
 
@@ -74,7 +65,7 @@ Folder discovery returns at most 4,096 permitted folders and fails without a par
 
 A summary has `reference` (`folder`, `uidValidity`, `uid`), `from`, `to`, `cc`, `subject`, `senderDate`, `internalDate`, `seen`, and `size`. Optional metadata is explicitly null when absent. Dates in results use ISO 8601 timestamps; size is reported bytes. Preserve all three reference fields from a search result when calling `get_message`; identifiers are integers from 1 through 4,294,967,295.
 
-Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Sender dates are exact `YYYY-MM-DD`, inclusive `sentStart` and exclusive `sentEnd`, with start strictly before end if both are supplied. Filtering uses the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, ignoring time and timezone (no UTC conversion). There is no internal-date fallback; missing, malformed or inaccurate sender dates can affect matching. This replaces the former delivery-date behavior as of 2026-10-18. The old `receivedStart`/`receivedEnd` arguments return `invalid_input`; update clients and restart the server to refresh tool discovery. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology.
+Search substrings must be nonblank, control-free, and at most 1,024 characters. Filters combine with AND; recipient matches To or Cc. Sender dates are exact `YYYY-MM-DD`, inclusive `sentStart` and exclusive `sentEnd`, with start strictly before end if both are supplied. Filtering uses the sender's `Date` header through IMAP `SENTSINCE`/`SENTBEFORE`, ignoring time and timezone (no UTC conversion). There is no internal-date fallback; missing, malformed or inaccurate sender dates can affect matching. Obsolete `receivedStart`/`receivedEnd` inputs return `invalid_input`; refresh tool discovery after upgrading. Unread omitted/null means either status, true means unseen, false means seen. Limit defaults to 20 and must be 1–50. Results use descending UID order, which need not match sender chronology.
 
 For messages dated during a calendar month, call `search_messages` with:
 
@@ -90,7 +81,7 @@ To continue, pass the returned `nextCursor` as `cursor` and repeat the same fold
 
 `truncated` is true exactly when `nextCursor` is non-null. Stop only on a null cursor: messages can disappear between search and fetch, producing a short or empty page that still has a continuation. Later pages use matching UIDs below the previous candidate boundary, so higher-UID arrivals do not shift them. Each page evaluates filters again; unread changes can add/remove matches, and replaying a cursor can yield different results. This is not a mailbox snapshot. Search may still materialize all matching UIDs within the remaining range.
 
-Cursors are tied to this server process, folder, filters, and UIDVALIDITY. Server restart invalidates them with `invalid_input`; changed folder epochs return `stale_reference`. Start a new search in either case. Refresh tool discovery when upgrading; requests without cursors keep their first-page behavior, but strict clients must accept the added nullable `nextCursor` output. The full [pagination contract](SEARCH-PAGINATION.md) covers cursor lifetime and mailbox-change behavior. Live Bridge pagination remains unverified.
+Cursors are tied to this server process, folder, filters, and UIDVALIDITY. Server restart invalidates them with `invalid_input`; changed folder epochs return `stale_reference`. Start a new search in either case. Refresh tool discovery when upgrading; requests without cursors keep their first-page behavior, but strict clients must accept the added nullable `nextCursor` output. The full [pagination contract](SEARCH-PAGINATION.md) covers cursor lifetime and mailbox-change behavior.
 
 `contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, reported `size` and nullable `attachmentId`. IDs are available for eligible parts when downloads are configured. Filenames are data and must never be treated as paths. `get_message` never returns or fetches attachment payloads.
 
@@ -104,9 +95,9 @@ Call `download_attachment` with that object. It returns the generated absolute p
 
 Each success creates a distinct private file retained until operator cleanup, even on repeated requests. There is no overwrite or caller-selected destination. Limits are 36 MiB encoded and 25 MiB decoded, with directory quota 250 MiB/1,000 entries and the existing 30-second deadline. Errors/cancellation before publication attempt to remove only that operation's incomplete file. A process crash can leave private `.part` files; cancellation or lost responses around atomic publication can leave completed files. Do not blindly retry expecting deduplication. The server never automatically deletes completed files.
 
-Download errors include `attachment_not_found`, `attachment_unsupported`, `attachment_too_large`, `attachment_malformed`, `download_directory_unsafe`, `download_limit_exceeded`, `download_storage_failed` and `download_cleanup_failed`. They return no path or content. See [exact meanings and reference validation](ATTACHMENT-DOWNLOADS.md#errors). Client PDF interpretation and live Bridge download acceptance remain pending; synthetic SDK/file handoff verifies transport and bytes only.
+Download errors include `attachment_not_found`, `attachment_unsupported`, `attachment_too_large`, `attachment_malformed`, `download_directory_unsafe`, `download_limit_exceeded`, `download_storage_failed` and `download_cleanup_failed`. They return no path or content. See [exact meanings and reference validation](ATTACHMENT-DOWNLOADS.md#errors). Byte transport alone does not establish PDF interpretation.
 
-Successes populate MCP `structuredContent` and a text content block containing the same JSON for compatible clients. Tool execution failures set `isError: true`, omit structured content, and return one text block containing only the fixed code below. They never masquerade as empty successful results. Received MCP cancellation notifications cancel the adapter operation and release its connection. With the pinned SDK in this environment, cancelling a high-level client call’s local token did not reliably deliver remote cancellation; a cancelled local await alone is not evidence of server cleanup. The process regression explicitly sends and awaits `notifications/cancelled` for a known request ID using `McpClient.SendMessageAsync`. See the [test evidence](TESTING.md#phase-3-coverage-and-limitations) and [explicit cancellation example in the process tests](../tests/ProtonMailMcp.Tests/Mcp/ToolTests.cs).
+Successes populate MCP `structuredContent` and equivalent JSON text. Execution failures set `isError: true`, omit structured content and return only a fixed code; they never appear as empty successes. Received MCP cancellation notifications cancel the adapter operation. A cancelled local SDK await alone does not prove remote cleanup; see [cancellation/shutdown verification](TESTING.md#cancellation-and-shutdown) and the [explicit SDK example](../tests/ProtonMailMcp.Tests/Mcp/ToolTests.cs).
 
 | Error code | Meaning |
 | --- | --- |
@@ -180,9 +171,7 @@ All configuration diagnostics carry the `startup: ` prefix, including rows that 
 
 ## Live acceptance status
 
-An operator-performed manual real Bridge smoke test succeeded on 2026-10-18 for MCP initialization, discovery of the three approved tools, folder listing, and bounded delivery-date-range search with truncation reporting. Bridge/Linux/runtime versions were not supplied for that run. Message-body retrieval, exact live date-boundary exclusion, before/after persistent flag and membership preservation, and failure/recovery behavior remain unverified. No mailbox output is retained in the documentation. Subsequent operator investigation found imported messages with old sender dates and newer internal dates. The original smoke test confirmed search execution, not the intended sender-date behavior. The replacement sender-date filters have not yet been tested against real Bridge.
-
-The live acceptance suite requires an exact opt-in phrase, external settings, a dedicated folder and a known-fixture manifest; it has not been run against Bridge. Standard tests never discover credentials or use an existing Bridge listener. Follow [TESTING.md](TESTING.md#opt-in-real-bridge-acceptance) for the implemented operator-prepared acceptance procedure; keep Phase 4 incomplete until actual evidence exists.
+Full live acceptance remains pending in [PLAN.md](../PLAN.md). Use the [operator-prepared acceptance procedure](TESTING.md#opt-in-real-bridge-acceptance), which requires explicit opt-in, external settings and a dedicated known-fixture folder. Standard tests never discover credentials or use Bridge's listener.
 
 ## VS Code MCP launch
 
