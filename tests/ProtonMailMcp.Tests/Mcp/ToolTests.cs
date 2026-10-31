@@ -489,7 +489,7 @@ public sealed class ToolTests
             host.config.Save();
             host.Client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
             {
-                Command = "dotnet", Arguments = [Path.Combine(AppContext.BaseDirectory, "ProtonMailMcp.dll"), "--config", host.config.ConfigPath],
+                Command = "dotnet", Arguments = [TestApplication.Path, "--config", host.config.ConfigPath],
                 Name = "SyntheticPhase3", StandardErrorLines = line => host.stderr.Enqueue(line)
             }), new McpClientOptions { InitializationTimeout = TimeSpan.FromSeconds(10), ProtocolVersion = "2025-11-25" });
             return host;

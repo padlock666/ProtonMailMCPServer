@@ -2,6 +2,16 @@
 
 Use one xUnit project with `Unit`, `Protocol`, `Mcp` and gated `LiveBridge` categories. Standard tests use synthetic data and require no Proton account, personal credentials or running Bridge. [SECURITY.md](../SECURITY.md) defines mandatory controls; [PLAN.md](../PLAN.md) records evidence and pending live acceptance.
 
+## Contents
+
+- [Coverage and limitations](#coverage-and-limitations)
+- [Protocol and process verification](#protocol-and-process-verification)
+- [Environment and evidence limits](#environment-and-evidence-limits)
+- [Cancellation and shutdown](#cancellation-and-shutdown)
+- [Opt-in real Bridge acceptance](#opt-in-real-bridge-acceptance)
+- [Commands and categorization](#commands-and-categorization)
+- [Attachment-download live stage](#attachment-download-live-stage)
+
 ## Coverage and limitations
 
 Test observable behavior; mocks of `IReadOnlyMailbox` are suitable for tool mapping only and cannot prove read-only adapter behavior.
@@ -12,7 +22,7 @@ Test observable behavior; mocks of `IReadOnlyMailbox` are suitable for tool mapp
 | Protected files/storage (`Unit`) | Open-handle ownership/modes, private parents, trusted ancestors, symlinks, FIFOs/directories, replacement races, certificate format/dates, safe diagnostics; download locks, quotas, hard links, no-overwrite publication, cleanup and strict decoder boundaries |
 | Search and identity (`Unit`, `Protocol`, `Mcp`) | AND filters, To/Cc, unread tri-state, sender-date boundaries and differing internal dates, UID ordering, default/max limits, missing UIDs and stale UIDVALIDITY |
 | Pagination (`Unit`, `Protocol`, `Mcp`) | `SearchCursorTests` and `SearchPaginationTests`: binding/tampering/restart, chains above 50 matches, empty/exact/overflow pages, sparse/extreme UIDs, vanished candidates, arrivals/unread changes, finite ranges, policy/epoch errors and recovery; see the [acceptance matrix](SEARCH-PAGINATION.md#acceptance-matrix) |
-| MIME/body (`Unit`, `Protocol`) | Plain/HTML and alternative/related selection; attached text/messages excluded; strict transfer/charset decoding, missing/malformed/unsupported bodies, advertised/actual literal caps, metadata/control/surrogate bounds and output truncation; inert links/images |
+| MIME/body (`Unit`, `Protocol`) | Plain/HTML and alternative/related selection; attached text/messages excluded; strict transfer/charset decoding, missing/malformed/unsupported bodies, advertised/actual literal caps, duplicate/partial/unexpected-UID payload rejection, metadata/control/surrogate bounds and output truncation; inert links/images |
 | Downloads (`Unit`, `Protocol`, `Mcp`) | `DownloadStorageTests` and `AttachmentDownloadTests`: top-level/nested parts, eligibility and IDs, restart/repeats, byte/hash/path handoff, malformed encodings, exact/overflow limits, unsolicited UID/section/offset/duplicate literals and missing payloads; retain body-only attachment exclusion; see the [acceptance matrix](ATTACHMENT-DOWNLOADS.md#acceptance-matrix) |
 | MCP process (`Mcp`) | Official SDK child-process initialization/discovery, exactly three/four tools, strict schemas/annotations, structured/text result equivalence, content statuses, input rejection before I/O, fixed runtime errors, cancellation/recovery, protocol-only stdout and sanitized stderr |
 | Concurrency and failure (`Protocol`, `Mcp`) | Queued/in-flight cancellation, production deadline, stalled logout, malformed/rejected commands, broken sockets, gate release and a fresh successful connection; EOF/shutdown behavior below |
@@ -21,9 +31,9 @@ Test observable behavior; mocks of `IReadOnlyMailbox` are suitable for tool mapp
 
 `Fixtures/ScriptedImapServer.cs` runs the actual `MailKitMailbox` on ephemeral loopback ports with generated test-only TLS certificates and synthetic settings/messages. Ordered scripts admit only expected commands/connections and require socket closure. Never reuse Bridge's listener or weaken production TLS for tests.
 
-Require pin validation before authentication in both TLS modes, EXAMINE with confirmed read-only access, UID addressing, BODYSTRUCTURE before selected-part PEEK, and safe logout/disposal without CLOSE, expunge or mutation. Verify these on success, rejection, stale/missing references, oversized responses, cancellation and disconnect. No full-message fetch is allowed. Capture synthetic traffic for assertions; never enable production protocol logging.
+Require pin validation before authentication in both TLS modes, EXAMINE with confirmed read-only access, UID addressing, BODYSTRUCTURE before selected-part PEEK, and safe logout/disposal without CLOSE, expunge or mutation. Verify these on success, rejection, stale/missing references, oversized responses, cancellation and disconnect. No full-message fetch is allowed. Capture synthetic traffic for assertions; never enable production protocol logging. SASL fixtures advertise multiple mechanisms and verify that rejection never falls back to another mechanism or LOGIN; successful SASL runs cover both TLS modes.
 
-Launch the built application through the pinned official SDK client, keeping build banners out of stdout. Capture stdout/stderr separately; parse stdout as MCP JSON and require diagnostics to contain only operation, correlation ID, duration and fixed outcome, excluding sentinel secrets and sensitive fixture fields. Check schema behavior rather than snapshotting entire generated descriptions. Tests cover default initialization and handshake revision `2025-11-25`.
+Launch the built application through the pinned official SDK client, keeping build banners out of stdout. Capture stdout/stderr separately; parse stdout as MCP JSON and require diagnostics to contain only operation, correlation ID, duration and fixed outcome, excluding sentinel secrets and sensitive fixture fields. Check schema behavior rather than snapshotting entire generated descriptions. Tests cover default initialization and handshake revision `2025-11-25`. The [publish workflow](DEVELOPMENT.md#build-and-test-workflow) runs the same MCP suite against a published DLL. Raw process fixtures kill their own process tree on failure and wait for exit before deleting synthetic files.
 
 ## Environment and evidence limits
 
@@ -113,7 +123,6 @@ A wrong-pin test proves mismatch rejection; actual certificate rotation remains 
 Keep opt-in variables scoped to a single command. Do not export them globally or place them in test/build tasks. Ordinary tests explicitly exclude `LiveBridge` even when opt-in exists. Record a skipped live test as **not run**, never as passing live acceptance.
 
 For dependency changes, update the lock file intentionally before validating locked restore. For MailKit changes rerun protocol tests; for Bridge compatibility rerun live acceptance. Record actual results and any skipped tests in [PLAN.md](../PLAN.md).
-
 
 ## Attachment-download live stage
 

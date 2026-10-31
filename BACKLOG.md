@@ -1,5 +1,9 @@
 # Deferred proposals
 
+## Contents
+
+- [Deferred proposals](#deferred-proposals)
+
 Inclusion here does not authorize implementation. Agree on scope and acceptance criteria before starting; preserve [SECURITY.md](SECURITY.md). Current implementation and acceptance work belong in [PLAN.md](PLAN.md).
 
 | Proposal | Scope still to decide |

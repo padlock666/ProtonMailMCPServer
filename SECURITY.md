@@ -2,6 +2,17 @@
 
 Mandatory trust boundaries and controls. Implementation evidence and pending live acceptance are tracked in [PLAN.md](PLAN.md); operator settings and file requirements are in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## Contents
+
+- [Assets and trust model](#assets-and-trust-model)
+- [Controls by boundary](#controls-by-boundary)
+- [Read-only enforcement](#read-only-enforcement)
+- [TLS and endpoint policy](#tls-and-endpoint-policy)
+- [Configuration, secrets, and data handling](#configuration-secrets-and-data-handling)
+- [Resource limits and untrusted content](#resource-limits-and-untrusted-content)
+- [Attachment-download boundary](#attachment-download-boundary)
+- [Live testing and maintenance](#live-testing-and-maintenance)
+
 ## Assets and trust model
 
 Protect Bridge credentials, decrypted message content, mailbox membership, and persistent flags, especially `\Seen` and `\Deleted`.

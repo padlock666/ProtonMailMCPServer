@@ -2,6 +2,19 @@
 
 The server exposes three read-only MCP tools over stdio: `list_folders`, `search_messages` and `get_message`. Optional `download_attachment` saves files for a client sharing the host filesystem. Full live/client acceptance remains pending; see [PLAN.md](../PLAN.md).
 
+## Contents
+
+- [Build and verify](#build-and-verify)
+- [Configure the host](#configure-the-host)
+- [Launch over stdio](#launch-over-stdio)
+- [Mailbox functionality and limits](#mailbox-functionality-and-limits)
+- [Tool inputs and results](#tool-inputs-and-results)
+- [Official SDK client example](#official-sdk-client-example)
+- [Startup diagnostics](#startup-diagnostics)
+- [Live acceptance status](#live-acceptance-status)
+- [VS Code MCP launch](#vs-code-mcp-launch)
+- [Runtime troubleshooting](#runtime-troubleshooting)
+
 ## Build and verify
 
 Use Linux and the SDK pinned in `global.json`. Run the [locked restore, Release build and synthetic tests](DEVELOPMENT.md#build-and-test-workflow) from the repository root. The suite needs no Proton account or Bridge; restore can need NuGet access and restricted runners can need IPC/synthetic loopback permission.
@@ -15,6 +28,8 @@ Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
 ## Launch over stdio
+
+For ChatGPT desktop/Codex registration and a local plugin selectable with `@`, see [Connect ChatGPT and Codex](CHATGPT-CODEX.md). The VS Code example below configures VS Code's MCP client separately.
 
 Launch the built artifact, so build output cannot enter the MCP protocol stream. From the repository root, the command is:
 
@@ -84,6 +99,8 @@ To continue, pass the returned `nextCursor` as `cursor` and repeat the same fold
 Cursors are tied to this server process, folder, filters, and UIDVALIDITY. Server restart invalidates them with `invalid_input`; changed folder epochs return `stale_reference`. Start a new search in either case. Refresh tool discovery when upgrading; requests without cursors keep their first-page behavior, but strict clients must accept the added nullable `nextCursor` output. The full [pagination contract](SEARCH-PAGINATION.md) covers cursor lifetime and mailbox-change behavior.
 
 `contentStatus` is one of `available`, `missing`, `unsupported`, `oversized`, or `malformed`. Unavailable text is null; an available empty body may be an empty string. Metadata-only content statuses are successful results. `truncated` describes the body character cap; `attachmentsTruncated` describes the 100-entry metadata cap. Each attachment has nullable `filename`, `mimeType`, reported `size` and nullable `attachmentId`. IDs are available for eligible parts when downloads are configured. Filenames are data and must never be treated as paths. `get_message` never returns or fetches attachment payloads.
+
+Malformed transfer encodings are not repaired: noncanonical base64 padding, incomplete quoted-printable escapes/soft breaks, and high bytes declared as `7bit` return `malformed`. Unexpected body UIDs, sections, partial offsets or duplicate literals fail the tool call with `protocol_failure`.
 
 To download a PDF, preserve the message reference and use its non-null attachment ID:
 

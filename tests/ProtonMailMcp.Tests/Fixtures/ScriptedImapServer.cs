@@ -13,7 +13,8 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
 {
     internal sealed record Step(string Command, string Response = "", bool EndConnection = false,
         bool WaitForDisconnect = false, TaskCompletionSource? Reached = null);
-    internal sealed record Session(IReadOnlyList<Step> Steps, bool StartTls = false, bool AdvertiseStartTls = true);
+    internal sealed record Session(IReadOnlyList<Step> Steps, bool StartTls = false, bool AdvertiseStartTls = true,
+        string Capabilities = "IMAP4rev1");
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(60));
     private readonly X509Certificate2 certificate;
@@ -63,7 +64,7 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
             try
             {
                 if (!session.StartTls) stream = tls = await EncryptAsync(stream);
-                await SendAsync(stream, "* OK [CAPABILITY IMAP4rev1" +
+                await SendAsync(stream, "* OK [CAPABILITY " + session.Capabilities +
                     (session.StartTls && session.AdvertiseStartTls ? " STARTTLS" : "") + "] synthetic ready\r\n");
                 if (session.StartTls && session.AdvertiseStartTls)
                 {
@@ -75,7 +76,7 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
                     var capability = await ReadAsync(stream);
                     Assert.EndsWith(" CAPABILITY", capability);
                     Commands.Add("CAPABILITY");
-                    await SendAsync(stream, "* CAPABILITY IMAP4rev1\r\n" + capability.Split(' ')[0] + " OK capability\r\n");
+                    await SendAsync(stream, "* CAPABILITY " + session.Capabilities + "\r\n" + capability.Split(' ')[0] + " OK capability\r\n");
                 }
                 foreach (var step in session.Steps)
                 {

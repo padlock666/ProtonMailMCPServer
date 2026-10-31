@@ -1,5 +1,15 @@
 # Repository instructions
 
+## Contents
+
+- [Purpose and current state](#purpose-and-current-state)
+- [Read before working](#read-before-working)
+- [Non-negotiable mailbox rules](#non-negotiable-mailbox-rules)
+- [Implementation conventions](#implementation-conventions)
+- [Verification and completion](#verification-and-completion)
+- [Code review rules](#code-review-rules)
+- [Instruction maintenance](#instruction-maintenance)
+
 ## Purpose and current state
 
 Build a small, read-only Proton Mail MCP server for Linux using C#/.NET 10, the official MCP C# SDK, and MailKit/MimeKit. Proton Mail Bridge is the only mailbox gateway.

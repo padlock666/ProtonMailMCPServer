@@ -2,6 +2,17 @@
 
 Approved architecture and implementation responsibilities. [PLAN.md](PLAN.md) records authorizations, evidence and pending acceptance; [SECURITY.md](SECURITY.md) defines mandatory controls. Exact tool inputs, results, limits and errors belong in [USAGE.md](docs/USAGE.md); configuration belongs in [CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## Contents
+
+- [Goals and scope](#goals-and-scope)
+- [Architecture](#architecture)
+- [Application boundary](#application-boundary)
+- [Adapter responsibilities](#adapter-responsibilities)
+- [Connection lifecycle and failure handling](#connection-lifecycle-and-failure-handling)
+- [Configuration and observability](#configuration-and-observability)
+- [Decisions and trade-offs](#decisions-and-trade-offs)
+- [Primary references](#primary-references)
+
 ## Goals and scope
 
 Serve one trusted local MCP client and one Bridge account on Linux over stdio. Discover permitted folders, search summaries and retrieve message text without changing mailbox content or persistent flags. Optional attachment downloads save decoded bytes to private local storage for the client's document tools.
@@ -55,6 +66,8 @@ The MCP boundary strictly deserializes arguments and rejects unknown fields, num
 
 A top-level body uses `BODY.PEEK[TEXT]`; nested bodies use their numeric section. Reject oversized literals before allocation and oversized writes during transfer. Strict MIME transfer/charset decoding yields an explicit malformed status rather than repaired content. MimeKit converts HTML without rendering, execution or network access. Oversized, missing and unsupported bodies return metadata with an explicit content status.
 
+Text and attachment fetches each admit one bounded literal for the expected UID/section, with zero offset. Reject duplicate or unexpected payloads as `protocol_failure`, including a UID supplied after the literal. Both paths use the same strict MIME transfer decoder before text charset conversion or file publication.
+
 Sanitize/control-strip metadata and enforce the [output limits](docs/USAGE.md#mailbox-functionality-and-limits); body text preserves line breaks and tabs. Missing optional metadata stays absent. These caps do not bound MailKit's internal metadata parsing or the full matching-UID set.
 
 ## Connection lifecycle and failure handling
@@ -62,6 +75,8 @@ Sanitize/control-strip metadata and enforce the [output limits](docs/USAGE.md#ma
 Serialize operations through an asynchronous gate. Each operation creates one client, connects to the configured literal loopback endpoint, verifies required TLS and the exact certificate pin before authentication, performs its read and logs out/disposes. Never share an active client across calls.
 
 The 30-second deadline includes queue time, I/O and cleanup. Propagate linked client cancellation/deadline tokens throughout. Open folders only read-only and verify access; fetch content through PEEK. No read/write fallback, folder-close command, expunge or automatic retry is permitted. Dispose failed/cancelled sessions immediately; the next call uses a fresh connection.
+
+Supply credentials for only one authentication attempt per connection. Preserve MailKit's initial mechanism selection, but prevent its credential overload from trying another SASL mechanism or LOGIN after rejection. A later explicit caller operation gets a fresh attempt.
 
 A post-logout token check enforces the deadline when MailKit absorbs cancellation during logout. Downloads perform this check before atomic publication; afterward their commit semantics apply. Received MCP cancellation notifications reach the adapter; stdin EOF can drain an active operation to its deadline.
 

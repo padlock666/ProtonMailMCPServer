@@ -9,7 +9,7 @@ namespace ProtonMailMcp.Tests.Mcp;
 [Trait("Category", "Mcp")]
 public sealed class HostTests
 {
-    private static string ApplicationPath => Path.Combine(AppContext.BaseDirectory, "ProtonMailMcp.dll");
+    private static string ApplicationPath => TestApplication.Path;
 
     [Fact]
     public async Task OfficialClientInitializesWithoutMailboxServices()
@@ -65,7 +65,7 @@ public sealed class HostTests
             Assert.Empty(remaining);
             Assert.Empty(await errors);
         }
-        finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        finally { await StopAsync(process); }
     }
 
     [Theory]
@@ -135,7 +135,7 @@ public sealed class HostTests
             if (download) Assert.Equal(inFlight ? 0 : 1, Directory.GetFiles(downloadPath!).Length);
             await server.VerifyAsync();
         }
-        finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        finally { await StopAsync(process); }
     }
 
     [Theory]
@@ -190,7 +190,13 @@ public sealed class HostTests
             Assert.DoesNotContain(SyntheticConfiguration.SentinelPassword, error);
             Assert.DoesNotContain(SyntheticConfiguration.SentinelUsername, error);
         }
-        finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        finally { await StopAsync(process); }
+    }
+
+    private static async Task StopAsync(Process process)
+    {
+        if (!process.HasExited) process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static Process Start(string[] arguments)

@@ -2,6 +2,19 @@
 
 Detailed attachment identity, retrieval, private-storage lifecycle and acceptance requirements extending [DESIGN.md](../DESIGN.md). [USAGE.md](USAGE.md) covers client calls; [CONFIGURATION.md](CONFIGURATION.md#optional-attachment-downloads) owns settings/path validation. See [PLAN.md](../PLAN.md#attachment-downloads) for authorization, evidence and pending client/live acceptance.
 
+## Contents
+
+- [Product behavior and scope](#product-behavior-and-scope)
+- [Configuration and enablement](#configuration-and-enablement)
+- [Attachment discovery and identity](#attachment-discovery-and-identity)
+- [Tool contract](#tool-contract)
+- [Limits and retention](#limits-and-retention)
+- [Retrieval, publication, and failure handling](#retrieval-publication-and-failure-handling)
+- [Errors](#errors)
+- [Implementation responsibilities](#implementation-responsibilities)
+- [Acceptance matrix](#acceptance-matrix)
+- [Evidence and references](#evidence-and-references)
+
 ## Product behavior and scope
 
 The user asks the AI to read an attached PDF. The AI searches for the message, calls `get_message` for attachment metadata, calls `download_attachment` with one attachment reference, and passes the returned absolute path to its PDF tools. The server saves the original attachment bytes after MIME transfer decoding. It does not extract PDF text, render pages, perform OCR, unlock encrypted PDFs, unpack archives, or launch files. Scanned and password-protected PDFs can be downloaded just like other files; interpretation belongs to the client.

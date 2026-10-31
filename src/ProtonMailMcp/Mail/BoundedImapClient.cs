@@ -1,5 +1,6 @@
 using MailKit;
 using MailKit.Net.Imap;
+using ProtonMailMcp.Contracts;
 
 namespace ProtonMailMcp.Mail;
 
@@ -8,19 +9,21 @@ internal sealed class BodyLimitException : IOException;
 // MailKit allocates body backing streams through this extension point before reading literals.
 internal sealed class BoundedImapClient : ImapClient
 {
-    private uint? attachmentUid;
-    private string? attachmentSection;
+    private uint? expectedUid;
+    private string? expectedSection;
+    private bool attachment;
     private bool allocated;
-    internal void ExpectAttachment(uint uid, string section)
+    internal void ExpectBody(uint uid, string section, bool isAttachment = false)
     {
-        attachmentUid = uid;
-        attachmentSection = section;
+        expectedUid = uid;
+        expectedSection = section;
+        attachment = isAttachment;
     }
-    internal void RequireNoAttachmentLiteral()
+    internal void RequireNoPayloadLiteral()
     {
         // MailKit can discard a stream whose UID appears after the literal and does not
         // match the request, without calling CommitStream. Never reinterpret that as absence.
-        if (allocated) throw new ProtonMailMcp.Contracts.MailboxException(ProtonMailMcp.Contracts.MailboxError.ProtocolFailure);
+        if (allocated) throw new MailboxException(MailboxError.ProtocolFailure);
     }
     protected override ImapFolder CreateImapFolder(ImapFolderConstructorArgs args) => new BoundedFolder(args, this);
 
@@ -28,28 +31,25 @@ internal sealed class BoundedImapClient : ImapClient
     {
         protected override Stream CreateStream(UniqueId? uid, string section, int offset, int length)
         {
-            if (client.attachmentSection is { } expected)
+            if (client.expectedSection is not { } expected || offset != 0 || section != expected || client.allocated ||
+                uid.HasValue && uid.Value.Id != client.expectedUid)
+                throw new MailboxException(MailboxError.ProtocolFailure);
+            if (length < 0 || length > (client.attachment ? PrivateDownloadStore.MaxEncodedBytes : MimeText.MaxTransferBytes))
             {
-                if (offset != 0 || section != expected || client.allocated ||
-                    uid.HasValue && uid.Value.Id != client.attachmentUid)
-                    throw new ProtonMailMcp.Contracts.MailboxException(ProtonMailMcp.Contracts.MailboxError.ProtocolFailure);
-                if (length < 0 || length > PrivateDownloadStore.MaxEncodedBytes)
-                    throw new ProtonMailMcp.Contracts.MailboxException(ProtonMailMcp.Contracts.MailboxError.AttachmentTooLarge);
-                client.allocated = true;
-                // Fixed capacity: MemoryStream growth cannot double the transfer allowance.
-                var stream = new MemoryStream(new byte[length], 0, length, writable: true, publiclyVisible: false);
-                stream.SetLength(0);
-                return stream;
+                if (client.attachment) throw new MailboxException(MailboxError.AttachmentTooLarge);
+                throw new BodyLimitException();
             }
-            if (length < 0 || length > MimeText.MaxTransferBytes) throw new BodyLimitException();
-            return new BoundedMemoryStream();
+            client.allocated = true;
+            // One fixed-capacity literal for the requested UID/section; duplicates cannot multiply the allowance.
+            var stream = new MemoryStream(new byte[length], 0, length, writable: true, publiclyVisible: false);
+            stream.SetLength(0);
+            return stream;
         }
 
         protected override Stream CommitStream(Stream stream, UniqueId uid, string section, int offset, int length)
         {
-            if (client.attachmentSection is { } expected &&
-                (uid.Id != client.attachmentUid || section != expected || offset != 0 || stream.Length != length))
-                throw new ProtonMailMcp.Contracts.MailboxException(ProtonMailMcp.Contracts.MailboxError.ProtocolFailure);
+            if (uid.Id != client.expectedUid || section != client.expectedSection || offset != 0 || stream.Length != length)
+                throw new MailboxException(MailboxError.ProtocolFailure);
             return base.CommitStream(stream, uid, section, offset, length);
         }
     }

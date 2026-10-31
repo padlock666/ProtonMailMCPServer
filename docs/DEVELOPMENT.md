@@ -2,7 +2,19 @@
 
 Build, dependency maintenance and debugging workflow. See [PLAN.md](../PLAN.md) for implementation status and pending live acceptance.
 
+## Contents
+
+- [Working with Codex](#working-with-codex)
+- [Toolchain and layout](#toolchain-and-layout)
+- [Build and test workflow](#build-and-test-workflow)
+- [Pinned dependencies and verification sources](#pinned-dependencies-and-verification-sources)
+- [Documentation maintenance](#documentation-maintenance)
+- [VS Code build, test and debug](#vs-code-build-test-and-debug)
+- [Completion](#completion)
+
 ## Working with Codex
+
+To connect this server's tools to ChatGPT/Codex, including a personal plugin for `@` selection, use the [client setup guide](CHATGPT-CODEX.md). This section covers development of the repository.
 
 Open the repository root in VS Code and begin with [AGENTS.md](../AGENTS.md), the instruction entry point linking the plan, design, security and testing requirements. Keep detailed behavior in those documents; create extra agent configuration only for a concrete need. Start a fresh session if updated instructions appear stale.
 
@@ -29,6 +41,16 @@ dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Cate
 Offline here means no Proton/Bridge account access; initial NuGet restore may need package-network access. Do not claim an offline package restore without a populated cache.
 
 For focused verification, select `Unit`, `Protocol`, or `Mcp`. `Protocol` exercises the actual adapter against synthetic TLS/IMAP sessions. Phase 4 implements an additional explicit opt-in for `LiveBridge`; live tests never run as part of the ordinary test command. Record checks actually run, failures, and environmental limits in `PLAN.md`.
+
+Publish locally and rerun the MCP process suite against that artifact:
+
+```bash
+dotnet publish src/ProtonMailMcp/ProtonMailMcp.csproj --configuration Release --no-restore --output /tmp/protonmcp-publish
+PROTONMCP_TEST_APPLICATION=/tmp/protonmcp-publish/ProtonMailMcp.dll \
+dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category=Mcp'
+```
+
+`PROTONMCP_TEST_APPLICATION` affects only the test harness. These tests launch the published DLL with synthetic private configuration and ephemeral TLS fixtures; they do not read personal settings or connect to Bridge. The framework-dependent artifact requires the matching .NET runtime.
 
 ## Pinned dependencies and verification sources
 
@@ -58,6 +80,7 @@ Give each fact a primary home and link to it:
 | [SECURITY.md](../SECURITY.md) | Mandatory controls and trust boundaries |
 | [CONFIGURATION.md](CONFIGURATION.md) | Settings, permissions and configuration validation |
 | [USAGE.md](USAGE.md) | Tool contracts, launch, limits, diagnostics and client workflows |
+| [CHATGPT-CODEX.md](CHATGPT-CODEX.md) | Official-source client registration and local plugin setup; hosted-web limitations |
 | [Feature contracts](SEARCH-PAGINATION.md) and [downloads](ATTACHMENT-DOWNLOADS.md) | Detailed algorithms, edge cases and acceptance matrices |
 | [TESTING.md](TESTING.md) | Coverage, test limitations and exact live procedure |
 

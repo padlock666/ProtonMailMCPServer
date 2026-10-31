@@ -2,6 +2,12 @@
 
 Prepare Bridge and local files using this guide, then follow [USAGE.md](USAGE.md) to launch the server. Full live acceptance remains pending in [PLAN.md](../PLAN.md); the synthetic suite needs no Bridge installation.
 
+## Contents
+
+- [Prepare Bridge and external files](#prepare-bridge-and-external-files)
+- [Export and replace the certificate](#export-and-replace-the-certificate)
+- [Live acceptance preparation](#live-acceptance-preparation)
+
 ## Prepare Bridge and external files
 
 1. Install the pinned .NET SDK from `global.json` and verify `dotnet --info`. Install Bridge using Proton's current [Linux installation instructions](https://proton.me/support/bridge-for-linux), including the credential-store prerequisites for your desktop. Record your distribution/release and Bridge version locally. Version requirements can change; installation support is distinct from this project's tested compatibility.

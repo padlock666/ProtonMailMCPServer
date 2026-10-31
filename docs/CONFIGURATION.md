@@ -4,6 +4,16 @@ The server loads one external JSON configuration file at startup. This guide own
 
 Omitting `AttachmentDownloads` keeps downloads disabled and preserves the three base tools. Add the optional setting below to enable a fourth tool. The default runnable example keeps downloads disabled.
 
+## Contents
+
+- [File locations and loading](#file-locations-and-loading)
+- [JSON settings](#json-settings)
+- [Folder access policy](#folder-access-policy)
+- [Protected local files](#protected-local-files)
+- [Public certificate and TLS pin](#public-certificate-and-tls-pin)
+- [Optional attachment downloads](#optional-attachment-downloads)
+- [Configuration errors](#configuration-errors)
+
 ## File locations and loading
 
 Pass exactly `--config /absolute/path/to/config.json` after the application DLL. The configuration file, password file, and public certificate must use absolute paths. Keep real settings and credentials outside the checkout, preferably in a private XDG configuration directory. The application does not infer repository boundaries or relocate files for you.

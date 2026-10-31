@@ -4,9 +4,20 @@ A local, read-only MCP server under development for accessing a Proton Mail mail
 
 **Status:** The three base tools and optional attachment downloads are implemented and synthetically tested. Full Bridge acceptance and intended-client PDF interpretation remain pending. See [PLAN.md](PLAN.md) for evidence and outstanding checks.
 
+## Contents
+
+- [Configuration and usage](#configuration-and-usage)
+- [MVP](#mvp)
+- [Documentation](#documentation)
+- [Prerequisites](#prerequisites)
+- [Privacy boundary](#privacy-boundary)
+- [Next step](#next-step)
+
 ## Configuration and usage
 
 Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder access policies, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes three base tools and an optional configured attachment-download tool.
+
+For client registration and a personal plugin selectable with `@`, follow [Connect ChatGPT and Codex](docs/CHATGPT-CODEX.md). Local stdio setup is supported by the design; hosted ChatGPT web requires a separate HTTP integration that is outside the current scope.
 
 ## MVP
 
@@ -28,6 +39,7 @@ The opt-in [attachment-download tool](docs/ATTACHMENT-DOWNLOADS.md) saves origin
 | [Linux/Bridge setup](docs/LINUX-SETUP.md) | Installation, public-certificate export/replacement, and operator preparation |
 | [Configuration guide](docs/CONFIGURATION.md) | Settings, file permissions, credentials, folder policies, and TLS pins |
 | [Usage guide](docs/USAGE.md) | Build/verification, stdio launch, current capabilities, and troubleshooting |
+| [ChatGPT/Codex setup](docs/CHATGPT-CODEX.md) | Local MCP registration, personal plugin packaging for `@`, and hosted-web limitations |
 | [AGENTS.md](AGENTS.md) | Instructions for Codex and other coding agents |
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
 | [Search pagination](docs/SEARCH-PAGINATION.md) | Implemented search cursors, mailbox-change behavior, and acceptance criteria; live verification pending |

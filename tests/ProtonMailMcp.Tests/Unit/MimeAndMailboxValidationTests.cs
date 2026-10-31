@@ -46,7 +46,10 @@ public sealed class MimeAndMailboxValidationTests
     [Theory]
     [InlineData("plain", "hello", "7bit", "UTF-8", "hello")]
     [InlineData("plain", "aGVsbG8=", "base64", "UTF-8", "hello")]
+    [InlineData("plain", "Zg==", "base64", "UTF-8", "f")]
+    [InlineData("plain", "Zm8=", "base64", "UTF-8", "fo")]
     [InlineData("plain", "caf=C3=A9", "quoted-printable", "UTF-8", "café")]
+    [InlineData("plain", "hel=\r\nlo", "quoted-printable", "UTF-8", "hello")]
     [InlineData("html", "<p>Hello &amp; goodbye</p><style>hidden</style><script>hidden</script>", "7bit", "UTF-8", "Hello & goodbye")]
     public async Task DecodesOnlyTextAndConvertsHtml(string subtype, string wire, string transfer, string charset, string expected)
     {
@@ -147,12 +150,25 @@ public sealed class MimeAndMailboxValidationTests
     [InlineData("base64", "not!base64")]
     [InlineData("base64", "aGVsbG8")]
     [InlineData("base64", "====")]
+    [InlineData("base64", "Zh==")]
+    [InlineData("base64", "Zm9=")]
     [InlineData("quoted-printable", "bad=ZZ")]
     [InlineData("quoted-printable", "bad=")]
+    [InlineData("quoted-printable", "bad=\nsoftbreak")]
+    [InlineData("quoted-printable", "bad\u007f")]
     public async Task MalformedTransferEncodingIsNotReportedAsSuccessfulText(string encoding, string value)
     {
         using var stream = new MemoryStream(Encoding.ASCII.GetBytes(value));
         var result = await MimeText.DecodeAsync(Part("plain", encoding, "UTF-8"), stream, CancellationToken.None);
+        Assert.Equal(ContentStatus.Malformed, result.Status);
+        Assert.Null(result.Text);
+    }
+
+    [Fact]
+    public async Task SevenBitTransferRejectsHighBytesEvenWhenCharsetCanDecodeThem()
+    {
+        using var stream = new MemoryStream([0x80]);
+        var result = await MimeText.DecodeAsync(Part("plain", "7bit", "windows-1252"), stream, default);
         Assert.Equal(ContentStatus.Malformed, result.Status);
         Assert.Null(result.Text);
     }

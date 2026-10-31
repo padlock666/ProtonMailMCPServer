@@ -31,6 +31,56 @@ public sealed class MailKitMailboxTests
     }
 
     [Theory]
+    [InlineData("offset")]
+    [InlineData("duplicate")]
+    [InlineData("uid-before")]
+    [InlineData("uid-after")]
+    [InlineData("section")]
+    public async Task UnexpectedBodyLiteralFailsClosedAndNextCallRecovers(string mode)
+    {
+        var response = mode switch
+        {
+            "offset" => "* 1 FETCH (UID 42 BODY[TEXT]<1> {5}\r\nhello)\r\n",
+            "duplicate" => "* 1 FETCH (UID 42 BODY[TEXT] {5}\r\nhello BODY[TEXT] {5}\r\nother)\r\n",
+            "uid-before" => "* 1 FETCH (UID 43 BODY[TEXT] {5}\r\nhello)\r\n",
+            "uid-after" => "* 1 FETCH (BODY[TEXT] {5}\r\nhello UID 43)\r\n",
+            _ => "* 1 FETCH (UID 42 BODY[2] {5}\r\nhello)\r\n"
+        };
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(),
+            new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", response + "{tag} OK body\r\n"))),
+            new Session(Login(Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings());
+        await ErrorAsync(MailboxError.ProtocolFailure, () => mailbox.GetMessageAsync(new("INBOX", 7, 42), default));
+        Assert.Single(await mailbox.ListFoldersAsync(default));
+        await server.VerifyAsync();
+        Assert.Equal(2, server.AcceptedConnections);
+    }
+
+    [Fact]
+    public async Task BodyUidMayFollowTheLiteral()
+    {
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(),
+            new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)",
+                "* 1 FETCH (BODY[TEXT] {5}\r\nhello UID 42)\r\n{tag} OK body\r\n"), Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings());
+        Assert.Equal("hello", (await mailbox.GetMessageAsync(new("INBOX", 7, 42), default)).Text);
+        await server.VerifyAsync();
+    }
+
+    [Fact]
+    public async Task MalformedTransferReturnsMetadataWithoutRepairedText()
+    {
+        var structure = Plain.Replace("7BIT", "BASE64").Replace("5 1", "4 1");
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Body("Zh=="), Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings());
+        var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), default);
+        Assert.Equal(ContentStatus.Malformed, result.ContentStatus);
+        Assert.Null(result.Text);
+        Assert.Equal(42u, result.Summary.Reference.Uid);
+        await server.VerifyAsync();
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task BothRequiredTlsModesWork(bool startTls)
@@ -118,6 +168,36 @@ public sealed class MailKitMailboxTests
         await ErrorAsync(MailboxError.AuthenticationFailed, () => mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
         Assert.Single(server.Commands);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RejectedSaslDoesNotTryAnotherMechanismOrLogin(bool advertiseLogin)
+    {
+        await using var server = new ScriptedImapServer(new Session([
+            new("AUTHENTICATE PLAIN [A-Za-z0-9+/=]+", "{tag} NO sensitive sentinel\r\n")],
+            Capabilities: "IMAP4rev1 SASL-IR AUTH=PLAIN" + (advertiseLogin ? " AUTH=LOGIN" : "")),
+            new Session(Login(Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings());
+        await ErrorAsync(MailboxError.AuthenticationFailed, () => mailbox.ListFoldersAsync(default));
+        Assert.Single(await mailbox.ListFoldersAsync(default));
+        await server.VerifyAsync();
+        Assert.Equal(2, server.AcceptedConnections);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AdvertisedSaslSucceedsInBothTlsModes(bool startTls)
+    {
+        var steps = Login(Logout());
+        steps[0] = new("AUTHENTICATE PLAIN [A-Za-z0-9+/=]+", "{tag} OK [CAPABILITY IMAP4rev1] authenticated\r\n");
+        await using var server = new ScriptedImapServer(new Session(steps, StartTls: startTls,
+            Capabilities: "IMAP4rev1 SASL-IR AUTH=PLAIN AUTH=LOGIN"));
+        using var mailbox = new MailKitMailbox(server.Settings(startTls ? BridgeTlsMode.StartTls : BridgeTlsMode.SslOnConnect));
+        Assert.Single(await mailbox.ListFoldersAsync(default));
+        await server.VerifyAsync();
     }
 
     [Theory]

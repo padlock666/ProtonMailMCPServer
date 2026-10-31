@@ -1,5 +1,7 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
@@ -137,12 +139,18 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             try
             {
                 // Explicit section only, never the full MIME message. MailKit emits BODY.PEEK[section].
-                using var stream = await folder.GetStreamAsync(uid, string.IsNullOrEmpty(body.PartSpecifier) ? "TEXT" : body.PartSpecifier, token);
+                var section = string.IsNullOrEmpty(body.PartSpecifier) ? "TEXT" : body.PartSpecifier;
+                ((BoundedImapClient)client).ExpectBody(reference.Uid, section);
+                using var stream = await folder.GetStreamAsync(uid, section, token);
                 var decoded = await MimeText.DecodeAsync(body, stream, token);
                 return Result(decoded.Text, decoded.Status, decoded.Truncated);
             }
             catch (BodyLimitException) { return Result(null, ContentStatus.Oversized); }
-            catch (MessageNotFoundException) { throw new MailboxException(MailboxError.MessageNotFound); }
+            catch (MessageNotFoundException)
+            {
+                ((BoundedImapClient)client).RequireNoPayloadLiteral();
+                throw new MailboxException(MailboxError.MessageNotFound);
+            }
         }, cancellationToken);
     }
 
@@ -182,12 +190,12 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             var encoding = AttachmentParts.Encoding(part);
             AttachmentParts.RequireEncoding(encoding);
             var section = string.IsNullOrEmpty(part.PartSpecifier) ? "TEXT" : part.PartSpecifier;
-            ((BoundedImapClient)client).ExpectAttachment(reference.Uid, section);
+            ((BoundedImapClient)client).ExpectBody(reference.Uid, section, isAttachment: true);
             Stream stream;
             try { stream = await folder.GetStreamAsync(uid, section, token); }
             catch (MessageNotFoundException)
             {
-                ((BoundedImapClient)client).RequireNoAttachmentLiteral();
+                ((BoundedImapClient)client).RequireNoPayloadLiteral();
                 var remaining = await folder.FetchAsync(new[] { uid }, MessageSummaryItems.UniqueId, token);
                 throw new MailboxException(remaining.Any(item => item.UniqueId.Id == reference.Uid)
                     ? MailboxError.AttachmentNotFound : MailboxError.MessageNotFound);
@@ -289,7 +297,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             await client.ConnectAsync(settings.Host.ToString(), settings.Port,
                 settings.TlsMode == BridgeTlsMode.StartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.SslOnConnect, token);
             if (!client.IsSecure) throw new MailboxException(MailboxError.TlsFailed);
-            await client.AuthenticateAsync(settings.Username, settings.Password, token);
+            await client.AuthenticateAsync(Encoding.UTF8, new SingleAttemptCredentials(settings.Username, settings.Password), token);
             var result = await operation(client, token);
             // Only successful, synchronized sessions log out. Errors/cancellation dispose immediately.
             // No folder Close call; LOGOUT cannot expunge a selected read-only folder.
@@ -320,4 +328,17 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
     }
 
     public void Dispose() => gate.Dispose();
+
+    // MailKit's credential overload otherwise retries rejected SASL mechanisms and then LOGIN.
+    // Keep its initial mechanism selection, but never supply credentials for a second attempt.
+    private sealed class SingleAttemptCredentials(string username, string password) : ICredentials
+    {
+        private int supplied;
+        public NetworkCredential GetCredential(Uri uri, string authType)
+        {
+            if (Interlocked.Exchange(ref supplied, 1) != 0)
+                throw new MailboxException(MailboxError.AuthenticationFailed);
+            return new NetworkCredential(username, password);
+        }
+    }
 }

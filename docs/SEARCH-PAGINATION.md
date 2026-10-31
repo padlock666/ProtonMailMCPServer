@@ -2,6 +2,16 @@
 
 Detailed cursor format, adapter algorithm and acceptance requirements extending [DESIGN.md](../DESIGN.md). See [USAGE.md](USAGE.md#tool-inputs-and-results) for client calls and [PLAN.md](../PLAN.md#search-pagination) for status/evidence; [SECURITY.md](../SECURITY.md) remains mandatory.
 
+## Contents
+
+- [Outcome and scope](#outcome-and-scope)
+- [MCP contract](#mcp-contract)
+- [Cursor format, binding, and lifetime](#cursor-format-binding-and-lifetime)
+- [Adapter algorithm](#adapter-algorithm)
+- [Concurrent changes and resource limits](#concurrent-changes-and-resource-limits)
+- [Acceptance matrix](#acceptance-matrix)
+- [Implementation touchpoints](#implementation-touchpoints)
+
 ## Outcome and scope
 
 Let a caller traverse matching messages in one permitted folder through successive `search_messages` calls. Preserve descending UID order, existing filters, default page size 20, maximum page size 50, and the three base MCP tools; attachment downloads remain separately configurable. A caller that omits pagination inputs continues to receive the first page.
