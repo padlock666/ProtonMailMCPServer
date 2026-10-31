@@ -2,7 +2,7 @@
 
 A local, read-only MCP server under development for accessing a Proton Mail mailbox through Proton Mail Bridge on Linux.
 
-**Status:** The three base tools and optional attachment downloads are implemented and synthetically tested. Full Bridge acceptance and intended-client PDF interpretation remain pending. See [PLAN.md](PLAN.md) for evidence and outstanding checks.
+**Status:** The three base tools, optional attachment downloads and explicit Linux keyring password source are implemented and synthetically tested; the keyring source also has isolated GNOME evidence. Full Bridge acceptance and intended-client PDF interpretation remain pending. See [PLAN.md](PLAN.md) for evidence and outstanding checks.
 
 ## Contents
 
@@ -15,7 +15,7 @@ A local, read-only MCP server under development for accessing a Proton Mail mail
 
 ## Configuration and usage
 
-Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, private credential files, folder access policies, and certificate pinning. Copy the [example configuration](examples/config.example.json) outside the checkout before editing real settings. Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes three base tools and an optional configured attachment-download tool.
+Start with the [configuration guide](docs/CONFIGURATION.md) for external settings, password sources, folder access policies, and certificate pinning. Copy the [file-mode example](examples/config.example.json) or [keyring-mode example](examples/config.keyring.example.json) outside the checkout before editing real settings. For password storage through GNOME Keyring, follow the [step-by-step setup](docs/LINUX-SETUP.md#gnome-keyring-setup). Follow the [usage guide](docs/USAGE.md) to build, verify, launch over stdio, and interpret diagnostics. The host exposes three base tools and an optional configured attachment-download tool.
 
 For client registration and a personal plugin selectable with `@`, follow [Connect ChatGPT and Codex](docs/CHATGPT-CODEX.md). Local stdio setup is supported by the design; hosted ChatGPT web requires a separate HTTP integration that is outside the current scope.
 
@@ -44,6 +44,7 @@ The opt-in [attachment-download tool](docs/ATTACHMENT-DOWNLOADS.md) saves origin
 | [DESIGN.md](DESIGN.md) | Requirements, architecture, interfaces, and trade-offs |
 | [Search pagination](docs/SEARCH-PAGINATION.md) | Implemented search cursors, mailbox-change behavior, and acceptance criteria; live verification pending |
 | [Attachment downloads](docs/ATTACHMENT-DOWNLOADS.md) | Implemented private-directory downloads, storage/retention rules and pending client/live acceptance |
+| [Linux keyring support](docs/KEYRING.md) | Explicit GNOME Keyring source, provisioning, owner-change handling and evidence limits |
 | [PLAN.md](PLAN.md) | Implementation phases, progress, and acceptance criteria |
 | [BACKLOG.md](BACKLOG.md) | Deferred proposals requiring scope agreement |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and mandatory safety controls |
@@ -55,7 +56,7 @@ Start with `AGENTS.md`, then `PLAN.md`. For an implementation task, read the lin
 
 ## Prerequisites
 
-- Linux and the .NET 10 SDK. SDK 10.0.113 is pinned in `global.json` with roll-forward disabled.
+- Linux and the .NET 10 SDK. SDK 10.0.114 is pinned in `global.json` with roll-forward disabled.
 - VS Code and suitable C# tooling; Codex is the intended coding assistant.
 - For live acceptance only: an eligible Proton subscription, a working Proton Mail Bridge installation and credential store, Bridge IMAP credentials, and its exported public TLS certificate. See [Proton's Linux requirements](https://proton.me/support/bridge-for-linux).
 

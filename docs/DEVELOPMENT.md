@@ -35,7 +35,7 @@ Run the following commands from the repository root:
 ```bash
 dotnet restore ProtonMailMcp.slnx --locked-mode
 dotnet build ProtonMailMcp.slnx --configuration Release --no-restore
-dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge'
+dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category!=LiveBridge&Category!=KeyringIntegration'
 ```
 
 Offline here means no Proton/Bridge account access; initial NuGet restore may need package-network access. Do not claim an offline package restore without a populated cache.
@@ -54,7 +54,7 @@ dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Cate
 
 ## Pinned dependencies and verification sources
 
-`global.json` pins SDK **10.0.113**, disables roll-forward, and excludes prereleases. Both projects target `net10.0` with nullable types and warnings as errors. Select a different SDK only by an intentional pin update.
+`global.json` pins SDK **10.0.114**, disables roll-forward, and excludes prereleases. Both projects target `net10.0` with nullable types and warnings as errors. Select a different SDK only by an intentional pin update.
 
 | Dependency | Exact version | Rationale |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ Install the Microsoft C# extension and open `ProtonMailMcp.slnx`. Build and run 
     },
     {
       "label": "test-synthetic", "type": "process", "command": "dotnet",
-      "args": ["test", "ProtonMailMcp.slnx", "--configuration", "Release", "--no-build", "--filter", "Category!=LiveBridge"],
+      "args": ["test", "ProtonMailMcp.slnx", "--configuration", "Release", "--no-build", "--filter", "Category!=LiveBridge&Category!=KeyringIntegration"],
       "dependsOn": "build-release", "problemMatcher": "$msCompile", "group": "test"
     }
   ]
@@ -133,3 +133,13 @@ The server process has no HTTP listener or MCP OAuth flow in this design. The pa
 ## Completion
 
 Update acceptance criteria only with evidence. Record commands, results, environmental limits and unrun live work in PLAN. Review changes for secrets/content leakage, stdout contamination and unsafe mailbox paths. Raise scope or safety changes before implementing them.
+
+## Keyring development
+
+The production source uses direct asynchronous P/Invoke over system libsecret/GLib/GIO/GObject; no managed dependency or lock graph changed. ABI declarations and lifecycle are in `Credentials/SecretNative.cs` and `LibsecretPasswordSource.cs`. [KEYRING.md](KEYRING.md#implemented-context-and-acceptance-ordering) documents callbacks, the bus barrier, credential acceptance, resource limits and the executable's GIO connection ownership. Do not add independent GIO consumers without reviewing that ownership.
+
+Standard native/process tests require Linux x64, `/usr/bin/python3`, Python `dbus`/`gi`, `/usr/bin/dbus-daemon`, the runtime sonames above and glibc at `/lib/x86_64-linux-gnu/libc.so.6` for the deliberate incomplete-dependency fixture. They create private non-activating buses, use only synthetic credentials and never start GNOME. The separately gated `KeyringIntegration` suite also requires `/usr/bin/gnome-keyring-daemon` and the Secret 1 typelib; it exercises the documented GI provisioning recipe on isolated storage. Missing prerequisites fail selected tests rather than installing packages or falling back to a desktop session.
+
+Run the [separate integration command](TESTING.md#keyring-verification). Standard commands/tasks exclude both gated categories. A skipped gate is unrun evidence. No personal-keyring or live-mail access is implicit in a development run.
+
+Published native-process coverage uses the same test-only application path with `--filter 'Category=Protocol|Category=Mcp'`; the in-process protocol tests still exercise the matching Release assembly, whose SHA-256 is recorded alongside the published DLL. Production accepts no test bus/config override.

@@ -8,7 +8,7 @@ public sealed class TestCategorizationTests
     [Fact]
     public void EveryTestHasExactlyOneRecognizedCategory()
     {
-        var allowed = new[] { "Unit", "Protocol", "Mcp", "LiveBridge" };
+        var allowed = new[] { "Unit", "Protocol", "Mcp", "LiveBridge", "KeyringIntegration" };
         foreach (var type in typeof(TestCategorizationTests).Assembly.GetTypes())
         foreach (var method in type.GetMethods())
         {

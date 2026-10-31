@@ -1,6 +1,6 @@
 # Test strategy
 
-Use one xUnit project with `Unit`, `Protocol`, `Mcp` and gated `LiveBridge` categories. Standard tests use synthetic data and require no Proton account, personal credentials or running Bridge. [SECURITY.md](../SECURITY.md) defines mandatory controls; [PLAN.md](../PLAN.md) records evidence and pending live acceptance.
+Use one xUnit project with `Unit`, `Protocol`, `Mcp` and gated `LiveBridge`/`KeyringIntegration` categories. Standard tests use synthetic data and require no Proton account, personal credentials or running Bridge. [SECURITY.md](../SECURITY.md) defines mandatory controls; [PLAN.md](../PLAN.md) records evidence and pending live acceptance.
 
 ## Contents
 
@@ -69,7 +69,7 @@ No automatic fixture cleanup is permitted. The operator manages the test mailbox
 
 ## Commands and categorization
 
-The xUnit project uses a `Category` trait: `Unit`, `Protocol`, `Mcp`, and `LiveBridge`. Every test must have one category, with a discovery check to prevent unclassified tests bypassing the live exclusion. Live tests also require an explicit opt-in flag and external configuration; selecting the category alone must not discover credentials or contact a mailbox.
+The xUnit project uses a `Category` trait: `Unit`, `Protocol`, `Mcp`, `LiveBridge`, and `KeyringIntegration`. Every test must have one category, with a discovery check to prevent unclassified tests bypassing the live exclusion. Live tests also require an explicit opt-in flag and external configuration; selecting the category alone must not discover credentials or contact a mailbox.
 
 Use the canonical [build and synthetic test commands](DEVELOPMENT.md#build-and-test-workflow) from the repository root.
 
@@ -77,7 +77,7 @@ The live test is `LiveAcceptance.OperatorPreparedFolderPreservesState`. Category
 
 Prepare these **external** files in a private directory outside the checkout (symlink paths resolving into the checkout are rejected):
 
-- A normal application JSON configuration in allowlist mode (legacy or explicit), with exactly one allowed dedicated folder, excluding INBOX. AllExcept mode is rejected by the live suite. Its password and public-certificate paths must also be external. Existing production secret/TLS validation applies unchanged.
+- A normal application JSON configuration in allowlist mode (legacy or explicit), with exactly one allowed dedicated folder, excluding INBOX. AllExcept mode is rejected by the live suite. Its selected password-file path (if any) and public-certificate path must also be external. Keyring mode uses the explicitly provisioned selector and does not require a password file. Existing production secret/TLS validation applies unchanged.
 - A fixture manifest, at most 65,536 bytes, with the case-sensitive schema below. It describes **every** message in the folder (2–50 messages); no automatically adopted baseline is written. Known identifiers must be supplied by the operator through read-only inspection in a separate trusted client. Do not obtain them by inspecting Bridge stores. The suite compares this baseline before and after reads and after failure/recovery stages.
 
 ```json
@@ -137,3 +137,22 @@ The optional live `downloads` stage requires **both** `PROTONMCP_LIVE=I_AUTHORIZ
 ```
 
 These are synthetic placeholders and a fragment, not a complete live manifest. The download uses the manifest's existing `AttachmentUid`. The stage captures mailbox state, downloads twice, compares both returned metadata and saved bytes to the expected hash/length, and checks UIDVALIDITY/membership/persistent flags again. It retains both files for operator cleanup and never prepares/changes/cleans up messages. Ordinary live `reads` remains metadata-only. Gate/fixture validation is tested synthetically; this stage has not been run against Bridge.
+
+## Keyring verification
+
+Provider acceptance is covered by `Unit.KeyringConfigurationTests`, `Protocol.KeyringPasswordTests`, `Mcp.KeyringProcessTests` and gated `KeyringIntegration.GnomePasswordTests`. The standard suites use real libsecret against a Python fixture-owned Secret Service, plus the actual application/MailKit adapter and synthetic pinned TLS/IMAP. They verify exact collection attributes and all-match selection, locked/duplicate/missing/deleted/denied/invalid replies, byte/UTF-8 bounds, pin-before-lookup, rotation and one authentication attempt. They cover cancellation at the native bus handshake, alias, search and load; queue cancellation; 16 ownership-transition cases; late replies; post-handoff non-revocation; prompt lease disposal; the shared 30-second deadline; and stdin EOF. Captured stdout is parsed as protocol JSON; stderr is checked for canaries, selectors, native text and bus addresses. The fixture observes method names (never secret payloads) to reject mutation/unlock/prompt calls and checks disconnected GIO clients after lookup.
+
+Nonsecret standard prerequisites are Linux x64, `/usr/bin/python3` with `dbus`/`gi`, `/usr/bin/dbus-daemon`, system libsecret/GLib/GIO/GObject and glibc at `/lib/x86_64-linux-gnu/libc.so.6` for the deliberately incomplete native-dependency child. The separately gated GNOME suite also requires `/usr/bin/gnome-keyring-daemon` and the Secret 1 typelib (`gir1.2-secret-1` on the tested distribution). Exact versions are recorded in [KEYRING.md](KEYRING.md#native-dependencies-and-apis). Missing prerequisites fail selected tests; they never install packages or use a personal desktop bus.
+
+Both fixtures create non-activating private buses and private temporary HOME/XDG state, clear inherited desktop/service-name transport settings for children, bound execution and reap only owned children before removing storage. Only the gated GNOME suite launches GNOME with a synthetic collection password over private stdin. The application itself never runs Python, credential commands, a bus or a daemon. Test-only child environments do not add production configuration options.
+
+Run the real-GNOME suite separately:
+
+```bash
+PROTONMCP_KEYRING_INTEGRATION=I_AUTHORIZE_ISOLATED_SYNTHETIC_KEYRING_TESTS \
+dotnet test ProtonMailMcp.slnx --configuration Release --no-build --filter 'Category=KeyringIntegration'
+```
+
+The fact attribute and fixture body check the gate before launching children. Selecting this category without the gate skips all four tests before bus/keyring access; that is not compatibility evidence. With the gate, four provider tests exercise unlocked authentication, the documented GI provisioning recipe, encrypted libsecret session negotiation, rotation, locked failure without UI, duplicate/missing items, and owner-loss/restart recovery. Standard commands exclude this category even if its gate is set. None uses Bridge or personal storage.
+
+Published verification selects `Category=Protocol|Category=Mcp` with `PROTONMCP_TEST_APPLICATION` pointing to the published DLL. Actual child-process keyring/IMAP tests then use that artifact; in-process adapter tests use the matching Release assembly, with SHA-256 equality recorded. These tests establish synthetic transport and cleanup for the tested versions, not real Bridge flags/membership or personal desktop behavior. Live fixtures now accept either selected source and retain all existing external-file, authorization and dedicated-folder gates. No live suite was authorized or run.

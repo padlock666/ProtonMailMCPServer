@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ProtonMailMcp.Configuration;
+using ProtonMailMcp.Credentials;
 using ProtonMailMcp.Mail;
 using ProtonMailMcp.Tools;
 
@@ -27,6 +28,7 @@ try
     // Application diagnostics are fixed codes written directly to stderr below.
     builder.Logging.AddFilter(_ => false);
     builder.Services.AddSingleton(settings);
+    builder.Services.AddSingleton<IPasswordSource>(_ => PasswordSources.Create(settings));
     builder.Services.AddSingleton<SearchCursorCodec>();
     if (downloads is not null) builder.Services.AddSingleton(downloads);
     builder.Services.AddSingleton<IReadOnlyMailbox, MailKitMailbox>();

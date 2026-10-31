@@ -41,18 +41,33 @@ internal static class ConfigurationLoader
                 throw new ConfigurationException("configuration_username_invalid");
             var (folderMode, allowedFolders, excludedFolders) = ReadFolderAccess(document, json.RootElement);
             RequireAbsolutePath(document.CertificateFile);
-            RequireAbsolutePath(document.PasswordFile);
+            var hasFile = json.RootElement.TryGetProperty("PasswordFile", out _);
+            var hasKeyring = json.RootElement.TryGetProperty("PasswordKeyring", out _);
+            if (hasFile == hasKeyring) throw new ConfigurationException("configuration_password_source_invalid");
+            KeyringSelector? selector = null;
+            if (hasFile) RequireAbsolutePath(document.PasswordFile);
+            else
+            {
+                var keyring = document.PasswordKeyring;
+                if (keyring?.CollectionAlias != "default" || !Guid.TryParseExact(keyring.ItemId, "D", out var id) ||
+                    id == Guid.Empty || id.ToString("D") != keyring.ItemId)
+                    throw new ConfigurationException("configuration_password_keyring_invalid");
+                selector = new("default", keyring.ItemId!);
+            }
             string? downloadDirectory = null;
             if (json.RootElement.TryGetProperty("AttachmentDownloads", out _))
             {
                 downloadDirectory = document.AttachmentDownloads?.Directory;
                 LinuxProtectedFile.ValidateDownloadPath(downloadDirectory);
-                foreach (var protectedPath in new[] { path, document.PasswordFile!, document.CertificateFile! })
+                foreach (var protectedPath in new[] { path, document.PasswordFile, document.CertificateFile! }.OfType<string>())
                     if (Path.GetFullPath(protectedPath).StartsWith(downloadDirectory + "/", StringComparison.Ordinal))
                         throw new ConfigurationException("configuration_download_directory_unsafe");
                 using var directory = LinuxProtectedFile.OpenDownloadDirectory(downloadDirectory!);
             }
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
+            if (selector is not null)
+                return new BridgeSettings(host, document.Port, tlsMode, document.Username, "",
+                    certificateDer, allowedFolders, folderMode, excludedFolders, downloadDirectory, selector);
             await using var secret = LinuxProtectedFile.Open(document.PasswordFile!);
             var password = new UTF8Encoding(false, true).GetString(await ReadBoundedAsync(secret, 4096, cancellationToken));
             // Accept one conventional line ending, but never trim spaces from a credential.

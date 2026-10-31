@@ -9,6 +9,7 @@ using MailKit.Search;
 using MailKit.Security;
 using ProtonMailMcp.Configuration;
 using ProtonMailMcp.Contracts;
+using ProtonMailMcp.Credentials;
 using ProtonMailMcp.Mail;
 
 namespace ProtonMailMcp.Tests.LiveBridge;
@@ -93,7 +94,7 @@ public sealed class LiveAcceptance
             {
                 LiveManifest.Require(configFile.Length <= 65536, "configuration_too_large");
                 var config = await JsonSerializer.DeserializeAsync<ConfigurationDocument>(configFile, cancellationToken: token);
-                ExternalValue(config?.PasswordFile);
+                if (config?.PasswordFile is not null) ExternalValue(config.PasswordFile);
                 ExternalValue(config?.CertificateFile);
                 if (stage == "downloads") ExternalValue(config?.AttachmentDownloads?.Directory);
             }
@@ -182,7 +183,7 @@ public sealed class LiveAcceptance
                 using var key = ECDsa.Create();
                 using var wrongCert = new CertificateRequest("CN=synthetic.invalid", key, HashAlgorithmName.SHA256)
                     .CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
-                using var wrongPin = new MailKitMailbox(Copy(settings, settings.Password, wrongCert.RawData));
+                using var wrongPin = new MailKitMailbox(Copy(settings, settings.Password, wrongCert.RawData, preserveSource: true));
                 await ExpectError(() => wrongPin.SearchAsync(new(manifest.Folder), token), MailboxError.TlsFailed);
                 using var wrongPassword = new MailKitMailbox(Copy(settings, "SYNTHETIC-wrong-" + Guid.NewGuid().ToString("N"), settings.CertificateDer.ToArray()));
                 await ExpectError(() => wrongPassword.SearchAsync(new(manifest.Folder), token), MailboxError.AuthenticationFailed);
@@ -211,8 +212,9 @@ public sealed class LiveAcceptance
             "download_fixture_required");
     }
 
-    private static BridgeSettings Copy(BridgeSettings s, string password, byte[] pin) =>
-        new(s.Host, s.Port, s.TlsMode, s.Username, password, pin, s.AllowedFolders, s.FolderAccessMode, s.ExcludedFolders);
+    private static BridgeSettings Copy(BridgeSettings s, string password, byte[] pin, bool preserveSource = false) =>
+        new(s.Host, s.Port, s.TlsMode, s.Username, password, pin, s.AllowedFolders, s.FolderAccessMode, s.ExcludedFolders,
+            passwordKeyring: preserveSource ? s.PasswordKeyring : null);
 
     internal static string RequireExternalPath(string? path, string repository)
     {
@@ -272,7 +274,11 @@ public sealed class LiveAcceptance
         await client.ConnectAsync(settings.Host.ToString(), settings.Port,
             settings.TlsMode == BridgeTlsMode.StartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.SslOnConnect, token);
         LiveManifest.Require(client.IsSecure && settings.IsFolderAllowed(manifest.Folder), "observer_policy_failed");
-        await client.AuthenticateAsync(settings.Username, settings.Password, token);
+        using (var password = await PasswordSources.Create(settings).GetAsync(token))
+        {
+            token.ThrowIfCancellationRequested();
+            await client.AuthenticateAsync(Encoding.UTF8, new MailKitMailbox.SingleAttemptCredentials(settings.Username, password.Value), token);
+        }
         var folder = await client.GetFolderAsync(manifest.Folder, token);
         LiveManifest.Require(settings.IsFolderAllowed(folder.FullName), "observer_policy_failed");
         await folder.OpenAsync(FolderAccess.ReadOnly, token);

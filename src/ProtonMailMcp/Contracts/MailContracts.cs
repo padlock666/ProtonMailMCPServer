@@ -17,6 +17,7 @@ internal sealed record MessageResult(MessageSummary Summary, string? Text, Conte
     bool Truncated, IReadOnlyList<AttachmentMetadata> Attachments, bool AttachmentsTruncated);
 internal enum MailboxError
 {
+    CredentialUnavailable, CredentialLocked, CredentialNotFound, CredentialAmbiguous, CredentialInvalid,
     InvalidInput, DeniedFolder, FolderUnavailable, BridgeUnavailable, AuthenticationFailed,
     TlsFailed, StaleReference, MessageNotFound, Timeout, ProtocolFailure,
     AttachmentDownloadsDisabled, AttachmentNotFound, AttachmentUnsupported, AttachmentTooLarge,

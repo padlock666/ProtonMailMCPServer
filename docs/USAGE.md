@@ -23,7 +23,7 @@ If no compatible SDK is found, compare `dotnet --list-sdks` with `global.json`: 
 
 ## Configure the host
 
-Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, separate private password file, public certificate, and explicit folder access policy. Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on all three files.
+Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, public certificate, explicit folder access policy and either a private password file or a [GNOME Keyring credential](LINUX-SETUP.md#gnome-keyring-setup). Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on the JSON, certificate and any selected password file.
 
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
@@ -217,7 +217,7 @@ Review the client's trust prompt and model/data policy before enabling tools. Us
 | Symptom | Safe operator action |
 | --- | --- |
 | `bridge_unavailable` | Start/unlock Bridge locally, wait for sync, check the displayed IMAP loopback endpoint and port, then retry deliberately. Initialization can succeed while Bridge is down. No automatic retries occur. |
-| `authentication_failed` | Check Bridge's generated IMAP username/password locally. If changed, update only the external password/configuration and restart the host. Do not use the Proton account password or inspect keyrings/caches. |
+| `authentication_failed` | Check Bridge's generated IMAP username/password locally. File mode requires restart after password/configuration changes; keyring mode observes the dedicated item on the next operation. Do not use the Proton account password or inspect Bridge-owned entries/caches. |
 | `tls_failed` | Check required mode, local clock, public certificate validity and intended Bridge instance. Follow [certificate replacement](LINUX-SETUP.md#export-and-replace-the-certificate); do not accept a network-learned pin or disable verification. |
 | `denied_folder` or absent discovery entry | Check the configured mode and exact full-name allowlist/exclusions; missing/nonselectable entries are omitted. Parent rules do not apply to children. The server never creates or subscribes folders. |
 | `stale_reference` | Search again and use the new folder + UIDVALIDITY + UID. During acceptance stop and investigate a changed epoch before preparing a new external manifest. |
@@ -229,3 +229,18 @@ Review the client's trust prompt and model/data policy before enabling tools. Us
 | Live state comparison failed | Stop other clients/rules, inspect fixtures locally using read-only access, and investigate changes. Never reset the baseline silently or clean up flagged messages with this suite. |
 
 Report only fixed codes, versions, and pass/fail outcomes. Do not enable production wire logging, paste message results, or attach raw settings to diagnose failures.
+
+## Keyring behavior
+
+An explicitly configured [PasswordKeyring](CONFIGURATION.md#keyring-alternative) source retrieves the dedicated item only after TLS pin verification, once per mailbox operation. Initialization/discovery performs no lookup. Ownership changes during lookup cancel native work, discard affected results and return `credential_unavailable` before authentication without retry. A later deliberate call can start fresh; changes after accepted credential handoff do not revoke that operation. The [exact ordering and lifetime](KEYRING.md#implemented-context-and-acceptance-ordering) define this boundary.
+
+| Code | Operator action |
+| --- | --- |
+| `credential_unavailable` | Check system native dependencies and the intended local desktop session/service. An owner change also causes this failure; retry only as a new caller operation after the service is stable. |
+| `credential_locked` | Unlock the intended collection through a trusted desktop tool. The server never prompts or unlocks. |
+| `credential_not_found` | Check the explicit default alias and dedicated item's three attributes locally. No discovery or cross-collection fallback occurs. |
+| `credential_ambiguous` | Resolve duplicate matching items deliberately through a trusted keyring tool, including locked matches. |
+| `credential_invalid` | Repair the dedicated secret's UTF-8 text/length/control-character or malformed-response problem locally. Do not paste values into diagnostics. |
+| `timeout` | Lookup shares the existing operation deadline; native bus/service request timeouts can expire earlier. No retry occurs. |
+
+For keyring-backed authentication failure, verify/rotate only the dedicated item. Its new value is used on the next operation; username/configuration/pin changes still require restart. File mode retains its startup snapshot. [Provisioning and migration](KEYRING.md#gnome-keyring-provisioning-and-migration) require deliberate operator actions; live verification remains separately authorized.

@@ -12,7 +12,7 @@ namespace ProtonMailMcp.Tests.Fixtures;
 internal sealed class ScriptedImapServer : IAsyncDisposable
 {
     internal sealed record Step(string Command, string Response = "", bool EndConnection = false,
-        bool WaitForDisconnect = false, TaskCompletionSource? Reached = null);
+        bool WaitForDisconnect = false, TaskCompletionSource? Reached = null, Task? Continue = null);
     internal sealed record Session(IReadOnlyList<Step> Steps, bool StartTls = false, bool AdvertiseStartTls = true,
         string Capabilities = "IMAP4rev1");
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
@@ -88,6 +88,7 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
                     Commands.Add(command);
                     Assert.Matches("\\A(?:" + step.Command + ")\\z", command);
                     step.Reached?.TrySetResult();
+                    if (step.Continue is not null) await step.Continue.WaitAsync(lifetime.Token);
                     if (step.EndConnection) { socket.Close(); break; }
                     await SendAsync(stream, step.Response.Replace("{tag}", line[..split]));
                     if (step.WaitForDisconnect) break;

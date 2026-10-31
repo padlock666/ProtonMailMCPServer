@@ -84,11 +84,13 @@ Startup configuration errors fail safely; temporary Bridge outages do not preven
 
 ## Configuration and observability
 
-Load one explicit external JSON file and protected password/public-certificate files at startup; changes require restart. Enforce the [configuration contract](docs/CONFIGURATION.md) and [security controls](SECURITY.md) rather than adding alternate settings sources.
+Load one explicit external JSON file and protected public certificate at startup, plus either the legacy protected password-file snapshot or an immutable keyring selector. Settings and file-mode password changes require restart; keyring passwords are retrieved per operation. Enforce the [configuration contract](docs/CONFIGURATION.md) and [security controls](SECURITY.md) rather than adding alternate settings sources.
 
 An explicit folder policy applies before connection and to resolved names. AllExcept permits future folders automatically; exclusions restrict access paths, so overlapping messages can remain visible through other labels. Live acceptance stays limited to one dedicated allowlisted folder.
 
 Stdout contains only MCP traffic. Stderr diagnostics contain only operation, correlation ID, duration and fixed outcome; no content, credentials, identifiers, paths, filters, cursors or raw exceptions. No telemetry or persistent mailbox cache is introduced.
+
+The [Linux keyring source](docs/KEYRING.md) uses an injected `IPasswordSource` owned by the mail adapter. It retrieves only the explicit GNOME-compatible Secret Service item after pinned TLS, with no startup lookup, unlock prompt or fallback. File mode retains its startup snapshot. Ordinary libsecret/GDBus monitoring cancels native work, discards results and fails before authentication on ownership changes during lookup. The [context/acceptance ordering](docs/KEYRING.md#implemented-context-and-acceptance-ordering) covers callback/handoff races and the post-handoff non-revocation boundary. Native resources are released and the bus connection closed before returning the disposable lease; the lease drops its managed string reference immediately after authentication. System native dependencies are lazy and managed package pins/locks are unchanged.
 
 ## Decisions and trade-offs
 

@@ -7,14 +7,16 @@ using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using ProtonMailMcp.Configuration;
+using ProtonMailMcp.Credentials;
 using ProtonMailMcp.Contracts;
 using AppSummary = ProtonMailMcp.Contracts.MessageSummary;
 
 namespace ProtonMailMcp.Mail;
 
 internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec? cursorCodec = null,
-    PrivateDownloadStore? downloadStore = null) : IReadOnlyMailbox, IDisposable
+    PrivateDownloadStore? downloadStore = null, IPasswordSource? passwordSource = null) : IReadOnlyMailbox, IDisposable
 {
+    private readonly IPasswordSource passwords = passwordSource ?? PasswordSources.Create(settings);
     private readonly SearchCursorCodec cursors = cursorCodec ?? new SearchCursorCodec();
     private readonly SemaphoreSlim gate = new(1, 1);
     private const int MaxFolderResults = 4096;
@@ -297,7 +299,11 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             await client.ConnectAsync(settings.Host.ToString(), settings.Port,
                 settings.TlsMode == BridgeTlsMode.StartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.SslOnConnect, token);
             if (!client.IsSecure) throw new MailboxException(MailboxError.TlsFailed);
-            await client.AuthenticateAsync(Encoding.UTF8, new SingleAttemptCredentials(settings.Username, settings.Password), token);
+            using (var password = await passwords.GetAsync(token))
+            {
+                token.ThrowIfCancellationRequested();
+                await client.AuthenticateAsync(Encoding.UTF8, new SingleAttemptCredentials(settings.Username, password.Value), token);
+            }
             var result = await operation(client, token);
             // Only successful, synchronized sessions log out. Errors/cancellation dispose immediately.
             // No folder Close call; LOGOUT cannot expunge a selected read-only folder.
@@ -331,7 +337,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
 
     // MailKit's credential overload otherwise retries rejected SASL mechanisms and then LOGIN.
     // Keep its initial mechanism selection, but never supply credentials for a second attempt.
-    private sealed class SingleAttemptCredentials(string username, string password) : ICredentials
+    internal sealed class SingleAttemptCredentials(string username, string password) : ICredentials
     {
         private int supplied;
         public NetworkCredential GetCredential(Uri uri, string authType)

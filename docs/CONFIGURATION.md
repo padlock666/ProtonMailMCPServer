@@ -13,12 +13,13 @@ Omitting `AttachmentDownloads` keeps downloads disabled and preserves the three 
 - [Public certificate and TLS pin](#public-certificate-and-tls-pin)
 - [Optional attachment downloads](#optional-attachment-downloads)
 - [Configuration errors](#configuration-errors)
+- [Keyring alternative](#keyring-alternative)
 
 ## File locations and loading
 
-Pass exactly `--config /absolute/path/to/config.json` after the application DLL. The configuration file, password file, and public certificate must use absolute paths. Keep real settings and credentials outside the checkout, preferably in a private XDG configuration directory. The application does not infer repository boundaries or relocate files for you.
+Pass exactly `--config /absolute/path/to/config.json` after the application DLL. The configuration file, public certificate and any selected password file must use absolute paths. Keep real settings and credentials outside the checkout, preferably in a private XDG configuration directory. The application does not infer repository boundaries or relocate files for you.
 
-Only this JSON file supplies application settings. `appsettings.json`, environment variables, and additional command-line overrides are not supported configuration sources. JSON property names and mode values are case-sensitive; unknown or duplicate properties fail startup. Settings, the password, and the public certificate are loaded once; restart the server after changing them.
+Only this JSON file supplies application settings. `appsettings.json`, environment variables, and additional command-line overrides are not supported configuration sources. JSON property names and mode values are case-sensitive; unknown or duplicate properties fail startup. Settings, the file-mode password snapshot and public certificate are loaded once; restart after changing them. Keyring mode retrieves its selected item afresh after pinned TLS on each operation.
 
 ## JSON settings
 
@@ -45,7 +46,8 @@ Copy [config.example.json](../examples/config.example.json) to a private directo
 | `Port` | Yes | Integer from 1 through 65,535, copied from Bridge's IMAP settings |
 | `TlsMode` | Yes | Exactly `StartTls` for mandatory STARTTLS or `SslOnConnect` for TLS from connection start, matching Bridge |
 | `Username` | Yes | Nonblank Bridge IMAP username without control characters |
-| `PasswordFile` | Yes | Absolute path to the separate owner-only file containing the Bridge-generated IMAP password |
+| `PasswordFile` | Exactly one password source | Absolute path to the separate owner-only file containing the Bridge-generated IMAP password |
+| `PasswordKeyring` | Alternative to `PasswordFile` | Object with exactly `CollectionAlias: "default"` and nonzero lowercase canonical UUID `ItemId`; explicit null, mixed sources and extra fields fail startup |
 | `CertificateFile` | Yes | Absolute path to the exported public Bridge certificate |
 | `FolderAccess` | Yes, unless using legacy `AllowedFolders` | Object with explicit `Mode` and the corresponding folder list; see below |
 | `AttachmentDownloads` | No | Object with one required `Directory` absolute path; omission disables downloads; null/unknown fields fail startup |
@@ -127,3 +129,26 @@ Configuration failures exit with code `2` and a fixed `startup: configuration_..
 See [SECURITY.md](../SECURITY.md) for the full trust boundary and [TESTING.md](TESTING.md) for synthetic verification and the implemented opt-in live acceptance procedure.
 
 For the complete installation, public-certificate export/replacement, and operator preparation workflow, see [LINUX-SETUP.md](LINUX-SETUP.md). Live acceptance uses a separate external manifest and explicit opt-in; these are test-runner inputs, never additional application settings.
+
+## Keyring alternative
+
+Follow the [GNOME Keyring setup walkthrough](LINUX-SETUP.md#gnome-keyring-setup) to prepare the collection and securely store the Bridge IMAP password. A complete [keyring configuration example](../examples/config.keyring.example.json) is available alongside the file-mode example. Use the UUID printed by provisioning in your private external copy.
+
+Remove `PasswordFile` entirely and add this fragment to the same private external configuration:
+
+```json
+{
+  "PasswordKeyring": {
+    "CollectionAlias": "default",
+    "ItemId": "44ec5121-59ce-4c39-8b45-551823feb631"
+  }
+}
+```
+
+Exactly one source must be present; both (including null fields), neither, explicit nulls, wrong types, duplicate/unknown fields and invalid nested selectors fail startup. Alias matching is case-sensitive and only `default` is supported. `ItemId` is a nonzero lowercase D-format UUID. This example UUID is synthetic: use the UUID for the dedicated item you provision through the [operator recipe](KEYRING.md#gnome-keyring-provisioning-and-migration). Selection uses all three exact nonsecret attributes: `application=protonmail-mcp`, `purpose=bridge-imap-password`, `id=<ItemId>`. Labels never select credentials. No bus address, service name, arbitrary attributes or item path can be configured.
+
+Keyring mode needs system libsecret/GLib/GIO/GObject and the existing local Unix session bus with GNOME Keyring's default collection already unlocked. The server does not discover credentials, start a bus/daemon, unlock, prompt, mutate items or fall back. It rejects TCP/autolaunch/multiple bus transports and libsecret's `SECRET_SERVICE_BUS_NAME` testing override. `G_DBUS_DEBUG` and `G_MESSAGES_DEBUG` must also be unset: lookup rejects them before native loading to prevent wire/metadata debug output. Inherited desktop bus context is not a settings override. Do not copy a personal bus address into tracked files. Missing dependencies fail with a fixed runtime error only when a mailbox operation reaches lookup; discovery and file mode remain independent of them.
+
+Passwords are strict UTF-8 text, 1–4,096 bytes, preserving spaces and rejecting blank/control/NUL/newline values. JSON and public-certificate protections and attachment-directory exclusions still apply; no dummy password file is needed. Rotation is observed on the next caller operation; selector/configuration/pin changes require restart. [KEYRING.md](KEYRING.md) defines ownership invalidation, lifetime, native versions and evidence limits.
+
+Source/selector failures use fixed `configuration_password_source_invalid`, `configuration_password_keyring_invalid`, or the existing generic configuration/type/path errors. No selector or native error is printed. The default example remains file mode; the separate keyring example contains no `PasswordFile`.
