@@ -80,7 +80,7 @@ Supply credentials for only one authentication attempt per connection. Preserve 
 
 A post-logout token check enforces the deadline when MailKit absorbs cancellation during logout. Downloads perform this check before atomic publication; afterward their commit semantics apply. Received MCP cancellation notifications reach the adapter; stdin EOF can drain an active operation to its deadline.
 
-Startup configuration errors fail safely; temporary Bridge outages do not prevent MCP initialization. Runtime failures use MCP tool-error semantics, distinct from successful empty searches or metadata-only body statuses. Malformed protocol replies/disconnections map to Bridge-unavailable; rejected commands and unconfirmed read-only access map to protocol failure. See USAGE for exact codes.
+Startup configuration errors fail safely; temporary Bridge outages and optional download-storage readiness do not prevent MCP initialization. Download path syntax and protected-file separation are checked at startup; directory safety, lock acquisition and quota checks run per download before any Bridge connection. Concurrent processes share one directory by holding its exclusive lock only through each download and cleanup, within the operation deadline. Runtime failures use MCP tool-error semantics, distinct from successful empty searches or metadata-only body statuses. Malformed protocol replies/disconnections map to Bridge-unavailable; rejected commands and unconfirmed read-only access map to protocol failure. See USAGE for exact codes.
 
 ## Configuration and observability
 

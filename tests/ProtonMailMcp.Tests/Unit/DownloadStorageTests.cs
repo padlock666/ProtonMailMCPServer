@@ -13,20 +13,71 @@ namespace ProtonMailMcp.Tests.Unit;
 public sealed class DownloadStorageTests
 {
     [Fact]
-    public async Task OptionalConfigurationAndLifetimeLockAreExplicit()
+    public async Task OptionalConfigurationAndOperationLockAreExplicit()
     {
         using var config = new SyntheticConfiguration();
         Assert.Null((await ConfigurationLoader.LoadAsync(config.ConfigPath, default)).DownloadDirectory);
         var path = config.EnableDownloads();
         Assert.Equal(path, (await ConfigurationLoader.LoadAsync(config.ConfigPath, default)).DownloadDirectory);
-        using (var store = new PrivateDownloadStore(path))
+        var first = new PrivateDownloadStore(path);
+        var second = new PrivateDownloadStore(path);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var held = await first.AcquireAsync(timeout.Token);
+        try
         {
-            Assert.Equal("configuration_download_directory_in_use", Assert.Throws<ConfigurationException>(() => new PrivateDownloadStore(path)).Message);
-            store.Check(true, default);
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+            var waiting = second.AcquireAsync(cancel.Token);
+            Assert.False(waiting.IsCompleted);
+            cancel.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            held.Check(true, default);
         }
-        using var restarted = new PrivateDownloadStore(path);
-        restarted.Check(true, default);
+        finally { held.Dispose(); }
+        using var acquired = await second.AcquireAsync(timeout.Token);
+        acquired.Check(true, default);
         Assert.Empty(Directory.GetFiles(path));
+    }
+
+    [Fact]
+    public async Task WaitingDownloadRechecksQuotaAfterThePreviousOperation()
+    {
+        using var config = new SyntheticConfiguration();
+        var path = config.EnableDownloads();
+        var held = await new PrivateDownloadStore(path).AcquireAsync(default);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var waiting = new PrivateDownloadStore(path).AcquireAsync(timeout.Token);
+        try
+        {
+            Assert.False(waiting.IsCompleted);
+            var file = Path.Combine(path, "synthetic-quota");
+            using (var stream = File.Create(file)) stream.SetLength(PrivateDownloadStore.MaxDirectoryBytes);
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        finally { held.Dispose(); }
+        Assert.Equal(MailboxError.DownloadLimitExceeded,
+            (await Assert.ThrowsAsync<MailboxException>(() => waiting)).Error);
+        File.Delete(Path.Combine(path, "synthetic-quota"));
+        using var recovered = await new PrivateDownloadStore(path).AcquireAsync(timeout.Token);
+    }
+
+    [Fact]
+    public async Task WaitingDownloadRejectsDirectoryReplacementAndReleasesTheOldLock()
+    {
+        using var config = new SyntheticConfiguration();
+        var path = config.EnableDownloads();
+        var held = await new PrivateDownloadStore(path).AcquireAsync(default);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var waiting = new PrivateDownloadStore(path).AcquireAsync(timeout.Token);
+        try
+        {
+            Assert.False(waiting.IsCompleted);
+            Directory.Move(path, path + ".old");
+            Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        finally { held.Dispose(); }
+        Assert.Equal(MailboxError.DownloadDirectoryUnsafe,
+            (await Assert.ThrowsAsync<MailboxException>(() => waiting)).Error);
+        using var recovered = await new PrivateDownloadStore(path + ".old").AcquireAsync(timeout.Token);
     }
 
     [Theory]
@@ -56,13 +107,13 @@ public sealed class DownloadStorageTests
         config.Save();
         await Assert.ThrowsAsync<ConfigurationException>(() => ConfigurationLoader.LoadAsync(config.ConfigPath, default));
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         Directory.Move(path, path + ".old");
         Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         Assert.Equal(MailboxError.DownloadDirectoryUnsafe, Assert.Throws<MailboxException>(() => store.Check(true, default)).Error);
         Directory.Delete(path);
         Directory.CreateSymbolicLink(path, path + ".old");
-        Assert.Throws<ConfigurationException>(() => new PrivateDownloadStore(path));
+        await Assert.ThrowsAsync<MailboxException>(() => new PrivateDownloadStore(path).AcquireAsync(default));
         Directory.Delete(path);
     }
 
@@ -71,11 +122,11 @@ public sealed class DownloadStorageTests
     [InlineData("directory")]
     [InlineData("public")]
     [InlineData("executable")]
-    public void RefusesUnsafeEntriesWithoutFollowingOrDeletingThem(string kind)
+    public async Task RefusesUnsafeEntriesWithoutFollowingOrDeletingThem(string kind)
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var entry = Path.Combine(path, "foreign");
         if (kind == "symlink") File.CreateSymbolicLink(entry, config.PasswordPath);
         else if (kind == "directory") Directory.CreateDirectory(entry);
@@ -90,11 +141,11 @@ public sealed class DownloadStorageTests
     }
 
     [Fact]
-    public void QuotaCountsSparseFilesAndCrashLeftoversAndRecoversAfterOperatorRemoval()
+    public async Task QuotaCountsSparseFilesAndCrashLeftoversAndRecoversAfterOperatorRemoval()
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var file = Path.Combine(path, ".abandoned.part");
         using (var stream = File.Create(file)) stream.SetLength(PrivateDownloadStore.MaxDirectoryBytes - PrivateDownloadStore.MaxFileBytes);
         File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
@@ -119,7 +170,7 @@ public sealed class DownloadStorageTests
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         string Save()
         {
             var temp = store.Create();
@@ -183,11 +234,11 @@ public sealed class DownloadStorageTests
     }
 
     [Fact]
-    public void PublicationNeverOverwritesAnExistingDestinationAndCleanupKeepsIt()
+    public async Task PublicationNeverOverwritesAnExistingDestinationAndCleanupKeepsIt()
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path) { NameFactory = () => new string('a', 32) };
+        using var store = await (new PrivateDownloadStore(path) { NameFactory = () => new string('a', 32) }).AcquireAsync(default);
         var final = Path.Combine(path, "attachment-" + new string('a', 32) + ".pdf");
         File.WriteAllText(final, "operator-owned sentinel");
         File.SetUnixFileMode(final, UnixFileMode.UserRead | UnixFileMode.UserWrite);
@@ -200,11 +251,11 @@ public sealed class DownloadStorageTests
     }
 
     [Fact]
-    public void ChangedTemporaryIdentityIsNeverPublishedOrDeleted()
+    public async Task ChangedTemporaryIdentityIsNeverPublishedOrDeleted()
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var temp = store.Create();
         temp.Stream.Dispose();
         var name = Assert.Single(Directory.GetFiles(path));
@@ -217,11 +268,11 @@ public sealed class DownloadStorageTests
     }
 
     [Fact]
-    public void HardLinksAndRootPermissionChangesFailClosed()
+    public async Task HardLinksAndRootPermissionChangesFailClosed()
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var info = new System.Diagnostics.ProcessStartInfo("ln") { UseShellExecute = false };
         info.ArgumentList.Add(config.PasswordPath);
         info.ArgumentList.Add(Path.Combine(path, "linked"));

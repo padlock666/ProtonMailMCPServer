@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using ProtonMailMcp.Mail;
 using ProtonMailMcp.Tests.Fixtures;
 
 namespace ProtonMailMcp.Tests.Mcp;
@@ -10,6 +12,146 @@ namespace ProtonMailMcp.Tests.Mcp;
 public sealed class HostTests
 {
     private static string ApplicationPath => TestApplication.Path;
+
+    [Theory]
+    [InlineData("ready")]
+    [InlineData("missing")]
+    [InlineData("unsafe")]
+    [InlineData("locked")]
+    public async Task ConcurrentHostsKeepToolsAvailableDespiteDownloadStorageReadiness(string storage)
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
+        using var fixture = new SyntheticConfiguration();
+        var path = fixture.EnableDownloads();
+        await using var server = new ScriptedImapServer(
+            new ScriptedImapServer.Session(ScriptedImapServer.Login(ScriptedImapServer.Logout())),
+            new(ScriptedImapServer.Login(ScriptedImapServer.Logout())),
+            new(ScriptedImapServer.Login(ScriptedImapServer.Examine(),
+                Protocol.AttachmentDownloadTests.Structure(Protocol.AttachmentDownloadTests.Pdf(4)),
+                Protocol.AttachmentDownloadTests.Payload("YQ=="), ScriptedImapServer.Logout())),
+            new(ScriptedImapServer.Login(ScriptedImapServer.Examine(),
+                Protocol.AttachmentDownloadTests.Structure(Protocol.AttachmentDownloadTests.Pdf(4)),
+                Protocol.AttachmentDownloadTests.Payload("Yg=="), ScriptedImapServer.Logout())));
+        fixture.Values["Port"] = server.Port;
+        fixture.Values["TlsMode"] = "SslOnConnect";
+        fixture.Values["AllowedFolders"] = new[] { "INBOX" };
+        File.WriteAllBytes(fixture.CertificatePath, server.CertificateDer);
+        fixture.Save();
+        if (storage == "missing") Directory.Delete(path);
+        if (storage == "unsafe") File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute | UnixFileMode.GroupExecute);
+        using var held = storage == "locked" ? await new PrivateDownloadStore(path).AcquireAsync(default) : null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var stderr = new ConcurrentQueue<string>();
+        await using var first = await ConnectAsync(fixture, stderr, timeout.Token);
+        await using var second = await ConnectAsync(fixture, stderr, timeout.Token);
+        foreach (var client in new[] { first, second })
+        {
+            Assert.Equal(new[] { "download_attachment", "get_message", "list_folders", "search_messages" },
+                (await client.ListToolsAsync(cancellationToken: timeout.Token)).Select(t => t.Name).Order());
+            if (storage is "missing" or "unsafe")
+            {
+                var error = await client.CallToolAsync("download_attachment", DownloadArguments(), cancellationToken: timeout.Token);
+                Assert.True(error.IsError);
+                Assert.Equal("download_directory_unsafe", Assert.IsType<TextContentBlock>(Assert.Single(error.Content)).Text);
+                Assert.Null(error.StructuredContent);
+                Assert.Equal(0, server.AcceptedConnections);
+            }
+        }
+        foreach (var client in new[] { first, second })
+            Assert.False((await client.CallToolAsync("list_folders", cancellationToken: timeout.Token)).IsError == true);
+        Assert.Equal(2, server.AcceptedConnections);
+        // Recover storage while both hosts remain alive; startup did not pin its identity.
+        if (storage == "missing") Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (storage == "unsafe") File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        held?.Dispose();
+        foreach (var client in new[] { first, second })
+            Assert.False((await client.CallToolAsync("download_attachment", DownloadArguments(), cancellationToken: timeout.Token)).IsError == true);
+        using var released = await new PrivateDownloadStore(path).AcquireAsync(timeout.Token);
+        await server.VerifyAsync();
+        var diagnostics = string.Join('\n', stderr);
+        Assert.DoesNotContain("startup:", diagnostics);
+        Assert.DoesNotContain(fixture.DirectoryPath, diagnostics);
+        Assert.DoesNotContain(SyntheticConfiguration.SentinelPassword, diagnostics);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeparateHostDownloadsSerializeAndRecheckQuotaAfterPublication(bool quota)
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
+        using var fixture = new SyntheticConfiguration();
+        var path = fixture.EnableDownloads();
+        if (quota)
+        {
+            var filler = Path.Combine(path, "synthetic-quota");
+            using (var file = File.Create(filler)) file.SetLength(PrivateDownloadStore.MaxDirectoryBytes - PrivateDownloadStore.MaxFileBytes);
+            File.SetUnixFileMode(filler, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = new List<ScriptedImapServer.Session>
+        {
+            new(ScriptedImapServer.Login(ScriptedImapServer.Examine(),
+                Protocol.AttachmentDownloadTests.Structure(Protocol.AttachmentDownloadTests.Pdf(4)),
+                Protocol.AttachmentDownloadTests.Payload("YQ=="),
+                new("LOGOUT", "* BYE leaving\r\n{tag} OK logout\r\n", Reached: reached, Continue: resume.Task)))
+        };
+        if (!quota) sessions.Add(new(ScriptedImapServer.Login(ScriptedImapServer.Examine(),
+            Protocol.AttachmentDownloadTests.Structure(Protocol.AttachmentDownloadTests.Pdf(4)),
+            Protocol.AttachmentDownloadTests.Payload("Yg=="), ScriptedImapServer.Logout())));
+        await using var server = new ScriptedImapServer(sessions.ToArray());
+        fixture.Values["Port"] = server.Port;
+        fixture.Values["TlsMode"] = "SslOnConnect";
+        fixture.Values["AllowedFolders"] = new[] { "INBOX" };
+        File.WriteAllBytes(fixture.CertificatePath, server.CertificateDer);
+        fixture.Save();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var stderr = new ConcurrentQueue<string>();
+        await using var first = await ConnectAsync(fixture, stderr, timeout.Token);
+        await using var second = await ConnectAsync(fixture, stderr, timeout.Token);
+        var firstCall = first.CallToolAsync("download_attachment", DownloadArguments(), cancellationToken: timeout.Token).AsTask();
+        try
+        {
+            await reached.Task.WaitAsync(timeout.Token);
+            var secondCall = second.CallToolAsync("download_attachment", DownloadArguments(), cancellationToken: timeout.Token).AsTask();
+            await Assert.ThrowsAsync<TimeoutException>(() => secondCall.WaitAsync(TimeSpan.FromMilliseconds(150)));
+            Assert.False(server.HasPendingConnection);
+            resume.TrySetResult();
+            var firstResult = await firstCall;
+            var secondResult = await secondCall;
+            Assert.False(firstResult.IsError == true);
+            if (quota)
+            {
+                Assert.True(secondResult.IsError);
+                Assert.Equal("download_limit_exceeded", Assert.IsType<TextContentBlock>(Assert.Single(secondResult.Content)).Text);
+                Assert.Equal(1, server.AcceptedConnections);
+            }
+            else
+            {
+                Assert.False(secondResult.IsError == true);
+                Assert.Equal(2, server.AcceptedConnections);
+            }
+            Assert.Equal(2, Directory.GetFiles(path).Length);
+            Assert.Empty(Directory.GetFiles(path, "*.part"));
+            if (quota) File.Delete(Path.Combine(path, "synthetic-quota"));
+            using var released = await new PrivateDownloadStore(path).AcquireAsync(timeout.Token);
+        }
+        finally { resume.TrySetResult(); }
+        await server.VerifyAsync();
+    }
+
+    private static Dictionary<string, object?> DownloadArguments() => new()
+    { ["folder"] = "INBOX", ["uidValidity"] = 7, ["uid"] = 42, ["attachmentId"] = "1" };
+
+    private static async Task<McpClient> ConnectAsync(SyntheticConfiguration fixture,
+        ConcurrentQueue<string> stderr, CancellationToken token) => await McpClient.CreateAsync(
+            new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Command = "dotnet", Arguments = [ApplicationPath, "--config", fixture.ConfigPath],
+                Name = "SyntheticConcurrentHost", StandardErrorLines = stderr.Enqueue
+            }), cancellationToken: token);
 
     [Fact]
     public async Task OfficialClientInitializesWithoutMailboxServices()
@@ -145,8 +287,6 @@ public sealed class HostTests
     [InlineData("writable-config")]
     [InlineData("writable-certificate")]
     [InlineData("ambiguous-folder-policy")]
-    [InlineData("download-directory-unsafe")]
-    [InlineData("download-directory-in-use")]
     public async Task StartupFailureIsSanitizedAndStderrOnly(string scenario)
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
@@ -168,13 +308,6 @@ public sealed class HostTests
             File.SetUnixFileMode(fixture.ConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
         if (scenario == "writable-certificate")
             File.SetUnixFileMode(fixture.CertificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherWrite);
-        using var lockStore = scenario == "download-directory-in-use" ?
-            new ProtonMailMcp.Mail.PrivateDownloadStore(fixture.EnableDownloads()) : null;
-        if (scenario == "download-directory-unsafe")
-        {
-            var downloadDirectory = fixture.EnableDownloads();
-            File.SetUnixFileMode(downloadDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupExecute);
-        }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var process = Start(arguments);
         try

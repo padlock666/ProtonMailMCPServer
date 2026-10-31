@@ -12,7 +12,7 @@ try
     if (args is not ["--config", var path])
         throw new ConfigurationException("configuration_usage_requires_config_path");
     var settings = await ConfigurationLoader.LoadAsync(path, CancellationToken.None);
-    using var downloads = settings.DownloadDirectory is { } directory ? new PrivateDownloadStore(directory) : null;
+    var downloads = settings.DownloadDirectory is { } directory ? new PrivateDownloadStore(directory) : null;
     // Do not ingest appsettings, environment overrides, or command-line provider settings.
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     {

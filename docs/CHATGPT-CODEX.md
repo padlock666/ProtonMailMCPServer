@@ -20,7 +20,7 @@ Use absolute paths in the examples below. Keep credentials outside the checkout 
 
 Use the plugin as the sole Proton Mail registration. If you previously registered it directly, back up `~/.codex/config.toml` and remove the entire `[mcp_servers.protonmail]` table. Do not leave a same-name direct table with `enabled = false`, because it can mask the plugin connection.
 
-If attachment downloads are enabled, use the configured private directory with only one active server instance at a time. Downloads remain optional; omitting `AttachmentDownloads` exposes the three base tools.
+If attachment downloads are enabled, multiple server instances can share the configured private directory. Downloads serialize across processes within the operation deadline; idle instances do not hold the directory lock. Missing/unsafe/busy storage does not prevent initialization or use of the three base tools. Restart clients after upgrading from the older lifetime-lock implementation so existing server processes release their locks. Downloads remain optional; omitting `AttachmentDownloads` exposes the three base tools.
 
 ## Create the plugin files
 

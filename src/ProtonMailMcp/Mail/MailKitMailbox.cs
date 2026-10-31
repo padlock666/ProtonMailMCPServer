@@ -166,6 +166,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
             throw new MailboxException(MailboxError.InvalidInput);
         if (settings.DownloadDirectory is null || downloadStore is null)
             throw new MailboxException(MailboxError.AttachmentDownloadsDisabled);
+        PrivateDownloadStore.Lease? storage = null;
         PrivateDownloadStore.TemporaryFile? temporary = null;
         void Cleanup()
         {
@@ -207,7 +208,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
                 if (stream.Length != part.Octets) throw new MailboxException(MailboxError.AttachmentMalformed);
                 try
                 {
-                    temporary = downloadStore.Create();
+                    temporary = storage!.Create();
                     var decoded = await AttachmentParts.DecodeAsync(stream, temporary.Stream, encoding, token);
                     await temporary.Stream.FlushAsync(token);
                     await temporary.Stream.DisposeAsync();
@@ -218,12 +219,16 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 { throw new MailboxException(MailboxError.DownloadStorageFailed); }
             }
-        }, cancellationToken, token => downloadStore.Check(true, token), (result, token) =>
+        }, cancellationToken, async token => { storage = await downloadStore.AcquireAsync(token); }, (result, token) =>
         {
             // Allocate the result before the rename commit. Only setting the path remains afterward.
             var extension = result.MimeType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) ? ".pdf" : ".bin";
             return result with { Path = temporary!.Publish(extension, token) };
-        }, Cleanup);
+        }, () =>
+        {
+            try { Cleanup(); }
+            finally { storage?.Dispose(); }
+        });
     }
 
     private void ValidateFolder(string folder)
@@ -275,7 +280,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
         summary.InternalDate, summary.Flags.HasValue ? summary.Flags.Value.HasFlag(MessageFlags.Seen) : null, summary.Size);
 
     private async Task<T> ExecuteAsync<T>(Func<ImapClient, CancellationToken, Task<T>> operation, CancellationToken callerToken,
-        Action<CancellationToken>? beforeConnect = null, Func<T, CancellationToken, T>? complete = null, Action? cleanup = null)
+        Func<CancellationToken, Task>? beforeConnect = null, Func<T, CancellationToken, T>? complete = null, Action? cleanup = null)
     {
         using var timeout = new CancellationTokenSource(OperationDeadline, DeadlineClock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callerToken, timeout.Token);
@@ -285,7 +290,7 @@ internal sealed class MailKitMailbox(BridgeSettings settings, SearchCursorCodec?
         {
             await gate.WaitAsync(token);
             entered = true;
-            beforeConnect?.Invoke(token);
+            if (beforeConnect is not null) await beforeConnect(token);
             using var client = new BoundedImapClient();
             client.ServerCertificateValidationCallback = (_, certificate, _, _) =>
             {

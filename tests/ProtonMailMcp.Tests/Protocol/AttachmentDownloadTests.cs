@@ -18,6 +18,89 @@ public sealed class AttachmentDownloadTests
         $"* 1 FETCH (UID 42 BODY[{section}] {{{value.Length}}}\r\n{value})\r\n{{tag}} OK fetched\r\n");
     private static AttachmentRequest Request(string id = "1", uint validity = 7, string folder = "INBOX") => new(new(folder, validity, 42), id);
 
+    private static async Task AssertStorageReleasedAsync(PrivateDownloadStore store)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var lease = await store.AcquireAsync(timeout.Token);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StorageLockWaitHonorsCancellationAndDeadlineBeforeConnectingAndRecovers(bool deadline)
+    {
+        using var config = new SyntheticConfiguration();
+        var path = config.EnableDownloads();
+        var store = new PrivateDownloadStore(path);
+        var held = await store.AcquireAsync(default);
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(4)), Payload("YQ=="), Logout())));
+        using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store)
+        { OperationDeadline = deadline ? TimeSpan.FromMilliseconds(150) : TimeSpan.FromSeconds(30) };
+        using var cancel = new CancellationTokenSource();
+        try
+        {
+            var waiting = mailbox.DownloadAttachmentAsync(Request(), cancel.Token);
+            Assert.False(waiting.IsCompleted);
+            if (deadline)
+                Assert.Equal(MailboxError.Timeout, (await Assert.ThrowsAsync<MailboxException>(() => waiting)).Error);
+            else
+            {
+                cancel.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            }
+            Assert.Equal(0, server.AcceptedConnections);
+            Assert.False(server.HasPendingConnection);
+        }
+        finally { held.Dispose(); }
+        var result = await mailbox.DownloadAttachmentAsync(Request(), default);
+        Assert.Equal("a", await File.ReadAllTextAsync(result.Path));
+        // The operation, not mailbox disposal, releases the lock.
+        using var released = await store.AcquireAsync(default);
+        await server.VerifyAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CleanupFailurePreservesForeignFileAndReleasesStorageLock(bool cancel)
+    {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
+        using var config = new SyntheticConfiguration();
+        var path = config.EnableDownloads();
+        var store = new PrivateDownloadStore(path);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(4)), Payload("YQ=="),
+            cancel ? new("LOGOUT", WaitForDisconnect: true, Reached: reached) :
+                new("LOGOUT", "* BYE leaving\r\n{tag} OK logout\r\n", Reached: reached, Continue: resume.Task))));
+        using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
+        using var cancellation = new CancellationTokenSource();
+        var call = mailbox.DownloadAttachmentAsync(Request(), cancellation.Token);
+        try
+        {
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var temporary = Assert.Single(Directory.GetFiles(path));
+            File.Move(temporary, temporary + ".old");
+            await File.WriteAllTextAsync(temporary, "synthetic replacement");
+            File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (cancel)
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+            }
+            else
+            {
+                resume.TrySetResult();
+                Assert.Equal(MailboxError.DownloadCleanupFailed,
+                    (await Assert.ThrowsAsync<MailboxException>(() => call)).Error);
+            }
+            Assert.Equal("synthetic replacement", await File.ReadAllTextAsync(temporary));
+            await AssertStorageReleasedAsync(store);
+        }
+        finally { resume.TrySetResult(); cancellation.Cancel(); }
+        await server.VerifyAsync();
+    }
+
     [Theory]
     [InlineData("base64", "%PDF-1.7\r\nsynthetic\r\n%%EOF")]
     [InlineData("quoted-printable", "%PDF-1.7\r\nsynthetic")]
@@ -29,7 +112,7 @@ public sealed class AttachmentDownloadTests
         var encoded = encoding == "base64" ? Convert.ToBase64String(Encoding.ASCII.GetBytes(data)) : data;
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(encoded.Length, encoding)), Payload(encoded), Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
         var result = await mailbox.DownloadAttachmentAsync(Request(), default);
@@ -51,7 +134,7 @@ public sealed class AttachmentDownloadTests
         var body = "(" + Plain + "(" + Pdf(encoded.Length) + "\"MIXED\")\"MIXED\")";
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         var summary = new Step(@"UID FETCH 42 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE\)",
             "* 1 FETCH (UID 42 FLAGS () ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL) BODYSTRUCTURE " + body + ")\r\n{tag} OK structure\r\n");
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), summary, Payload("hello", "1"), Logout())),
@@ -96,7 +179,7 @@ public sealed class AttachmentDownloadTests
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer();
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: mode == "disabled" ? null : path), downloadStore: store);
         if (mode == "storage") Directory.CreateDirectory(Path.Combine(path, "foreign"));
@@ -128,12 +211,13 @@ public sealed class AttachmentDownloadTests
         }));
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())), new Session(Login(Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
         Assert.Equal(Enum.Parse<MailboxError>(expected), (await Assert.ThrowsAsync<MailboxException>(() => mailbox.DownloadAttachmentAsync(
             Request(mode == "contained" ? "2" : "1", mode == "stale" ? 8u : 7u), default))).Error);
         Assert.Empty(Directory.GetFiles(path));
+        await AssertStorageReleasedAsync(store);
         await mailbox.ListFoldersAsync(default);
         await server.VerifyAsync();
     }
@@ -158,7 +242,7 @@ public sealed class AttachmentDownloadTests
         };
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(mode == "mismatch" ? 8 : 4)), payload)),
             new Session(Login(Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
@@ -166,6 +250,7 @@ public sealed class AttachmentDownloadTests
         Assert.Equal(Enum.Parse<MailboxError>(expected), error.Error);
         Assert.Null(error.InnerException);
         Assert.Empty(Directory.GetFiles(path));
+        await AssertStorageReleasedAsync(store);
         await mailbox.ListFoldersAsync(default);
         await server.VerifyAsync();
     }
@@ -181,7 +266,7 @@ public sealed class AttachmentDownloadTests
         else steps.Add(new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "* 1 FETCH (UID 42 BODY[TEXT] {4}\r\nY", WaitForDisconnect: true, Reached: reached));
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())), new Session(Login(Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
         using var cancel = new CancellationTokenSource();
@@ -190,6 +275,7 @@ public sealed class AttachmentDownloadTests
         cancel.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
         Assert.Empty(Directory.GetFiles(path));
+        await AssertStorageReleasedAsync(store);
         await mailbox.ListFoldersAsync(default);
         await server.VerifyAsync();
     }
@@ -201,7 +287,7 @@ public sealed class AttachmentDownloadTests
     {
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(4)),
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "{tag} OK none\r\n"),
             new("UID FETCH 42 UID", (messageExists ? "* 1 FETCH (UID 42)\r\n" : "") + "{tag} OK uid\r\n"))));
@@ -226,7 +312,7 @@ public sealed class AttachmentDownloadTests
         };
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(4)),
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", response))));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);
@@ -244,7 +330,7 @@ public sealed class AttachmentDownloadTests
             new string(' ', PrivateDownloadStore.MaxEncodedBytes - 4) + "YQ==";
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         var steps = new List<Step> { Examine(), Structure(Pdf(value.Length, overflow ? "BINARY" : "BASE64")), Payload(value) };
         if (!overflow) steps.Add(Logout());
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())));
@@ -268,7 +354,7 @@ public sealed class AttachmentDownloadTests
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var config = new SyntheticConfiguration();
         var path = config.EnableDownloads();
-        using var store = new PrivateDownloadStore(path);
+        var store = new PrivateDownloadStore(path);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Structure(Pdf(4)), Payload("YQ=="),
             new("LOGOUT", WaitForDisconnect: true, Reached: reached))), new Session(Login(Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(downloadDirectory: path), downloadStore: store);

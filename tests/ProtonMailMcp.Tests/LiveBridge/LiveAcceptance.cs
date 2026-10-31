@@ -108,7 +108,7 @@ public sealed class LiveAcceptance
             if (stage == "downloads")
             {
                 ValidateDownloadFixture(settings, manifest);
-                using var store = new PrivateDownloadStore(settings.DownloadDirectory!);
+                var store = new PrivateDownloadStore(settings.DownloadDirectory!);
                 using var reader = new MailKitMailbox(settings, downloadStore: store);
                 await VerifyState(settings, manifest, token);
                 for (var repeat = 0; repeat < 2; repeat++)

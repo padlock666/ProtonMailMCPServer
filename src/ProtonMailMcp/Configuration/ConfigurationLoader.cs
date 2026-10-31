@@ -62,7 +62,6 @@ internal static class ConfigurationLoader
                 foreach (var protectedPath in new[] { path, document.PasswordFile, document.CertificateFile! }.OfType<string>())
                     if (Path.GetFullPath(protectedPath).StartsWith(downloadDirectory + "/", StringComparison.Ordinal))
                         throw new ConfigurationException("configuration_download_directory_unsafe");
-                using var directory = LinuxProtectedFile.OpenDownloadDirectory(downloadDirectory!);
             }
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
             if (selector is not null)

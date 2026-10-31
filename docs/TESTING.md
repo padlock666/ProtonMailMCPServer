@@ -29,6 +29,8 @@ Test observable behavior; mocks of `IReadOnlyMailbox` are suitable for tool mapp
 
 ## Protocol and process verification
 
+Attachment regressions include two live synthetic MCP server processes sharing storage: discovery/base-tool access with missing, unsafe or externally locked storage; recovery without host restart; serialized downloads; post-wait quota checks; and storage-lock cancellation/deadline before any Bridge connection. Storage unit tests also cover post-wait directory replacement and lock recovery. No personal configuration, keyring or mailbox is used.
+
 `Fixtures/ScriptedImapServer.cs` runs the actual `MailKitMailbox` on ephemeral loopback ports with generated test-only TLS certificates and synthetic settings/messages. Ordered scripts admit only expected commands/connections and require socket closure. Never reuse Bridge's listener or weaken production TLS for tests.
 
 Require pin validation before authentication in both TLS modes, EXAMINE with confirmed read-only access, UID addressing, BODYSTRUCTURE before selected-part PEEK, and safe logout/disposal without CLOSE, expunge or mutation. Verify these on success, rejection, stale/missing references, oversized responses, cancellation and disconnect. No full-message fetch is allowed. Capture synthetic traffic for assertions; never enable production protocol logging. SASL fixtures advertise multiple mechanisms and verify that rejection never falls back to another mechanism or LOGIN; successful SASL runs cover both TLS modes.
