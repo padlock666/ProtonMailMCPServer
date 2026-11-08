@@ -135,9 +135,9 @@ If MailKit discards an unexpected-UID literal without committing it, a missing-s
 
 ## Implementation responsibilities
 
-Keep one application project and one xUnit project. Add immutable request/result DTOs and `DownloadAttachmentAsync` to the small `IReadOnlyMailbox` interface. Inject one narrowly scoped private-download store into the adapter for directory validation, quotas, temporary-file ownership and publication; do not introduce a repository, database, or general storage framework. MailKit objects and MIME transfer decoding stay inside `Mail/`; only DTOs cross to `Tools/`. The native directory-entry reader requires a 64-bit Linux process. Reuse protected-handle primitives without weakening validation of configuration, credentials, or certificate files.
+Keep one application project and one xUnit project. Add immutable request/result DTOs and `DownloadAttachmentAsync` to the small `IReadOnlyMailbox` interface. Inject one narrowly scoped private-download store into the adapter for directory validation, quotas, temporary-file ownership and publication; do not introduce a repository, database, or general storage framework. MailKit objects and MIME transfer decoding stay inside `Mail/`; only DTOs cross to `Tools/`. The native directory-entry reader requires a 64-bit Linux process. Reuse protected-handle primitives without weakening validation of configuration or certificate files.
 
-The original [implementation sequence](archive/IMPLEMENTATION-HISTORY.md#attachment-implementation-sequence) is archived; current verification requirements follow.
+The original [implementation sequence](archive/IMPLEMENTATION-HISTORY.md#attachment-downloads--design-requested-2026-10-21) is archived; current verification requirements follow.
 
 ## Acceptance matrix
 

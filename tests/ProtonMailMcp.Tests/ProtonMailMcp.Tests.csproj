@@ -5,7 +5,6 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="../../docs/KEYRING.md" Link="native/KEYRING.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../native/keyring_fixture.py" Link="native/keyring_fixture.py" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.11.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />

@@ -21,7 +21,7 @@ public sealed class MailKitMailboxTests
     public async Task ReadsDeletedUnreadMessageUsingExamineAndPeekOnly()
     {
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(), Body(), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal("hello", result.Text);
         Assert.Equal(ContentStatus.Available, result.ContentStatus);
@@ -49,7 +49,7 @@ public sealed class MailKitMailboxTests
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(),
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", response + "{tag} OK body\r\n"))),
             new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.ProtocolFailure, () => mailbox.GetMessageAsync(new("INBOX", 7, 42), default));
         Assert.Single(await mailbox.ListFoldersAsync(default));
         await server.VerifyAsync();
@@ -62,7 +62,7 @@ public sealed class MailKitMailboxTests
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(),
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)",
                 "* 1 FETCH (BODY[TEXT] {5}\r\nhello UID 42)\r\n{tag} OK body\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         Assert.Equal("hello", (await mailbox.GetMessageAsync(new("INBOX", 7, 42), default)).Text);
         await server.VerifyAsync();
     }
@@ -72,7 +72,7 @@ public sealed class MailKitMailboxTests
     {
         var structure = Plain.Replace("7BIT", "BASE64").Replace("5 1", "4 1");
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Body("Zh=="), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), default);
         Assert.Equal(ContentStatus.Malformed, result.ContentStatus);
         Assert.Null(result.Text);
@@ -86,7 +86,7 @@ public sealed class MailKitMailboxTests
     public async Task BothRequiredTlsModesWork(bool startTls)
     {
         await using var server = new ScriptedImapServer(new Session(Login(Logout()), StartTls: startTls));
-        using var mailbox = new MailKitMailbox(server.Settings(startTls ? BridgeTlsMode.StartTls : BridgeTlsMode.SslOnConnect));
+        using var mailbox = new MailKitMailbox(server.Settings(startTls ? BridgeTlsMode.StartTls : BridgeTlsMode.SslOnConnect), passwordSource: new SyntheticPasswordSource());
         Assert.Single(await mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
     }
@@ -100,7 +100,7 @@ public sealed class MailKitMailboxTests
         var start = mode == "future" ? DateTimeOffset.UtcNow.AddDays(1) : DateTimeOffset.UtcNow.AddDays(-2);
         var end = mode == "expired" ? DateTimeOffset.UtcNow.AddDays(-1) : DateTimeOffset.UtcNow.AddDays(2);
         await using var server = new ScriptedImapServer(start, end, new Session([]));
-        using var mailbox = new MailKitMailbox(server.Settings(pin: mode == "mismatch" ? new byte[32] : null));
+        using var mailbox = new MailKitMailbox(server.Settings(pin: mode == "mismatch" ? new byte[32] : null), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.TlsFailed, () => mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
         Assert.Empty(server.Commands);
@@ -110,7 +110,7 @@ public sealed class MailKitMailboxTests
     public async Task MissingStartTlsFailsWithoutLoginOrFallback()
     {
         await using var server = new ScriptedImapServer(new Session([], StartTls: true, AdvertiseStartTls: false));
-        using var mailbox = new MailKitMailbox(server.Settings(BridgeTlsMode.StartTls));
+        using var mailbox = new MailKitMailbox(server.Settings(BridgeTlsMode.StartTls), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.TlsFailed, () => mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
         Assert.Empty(server.Commands);
@@ -120,11 +120,11 @@ public sealed class MailKitMailboxTests
     public async Task DeniedFoldersAndInvalidReferencesNeverConnect()
     {
         await using var server = new ScriptedImapServer();
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.DeniedFolder, () => mailbox.SearchAsync(new("INBOX/child"), CancellationToken.None));
         await ErrorAsync(MailboxError.DeniedFolder, () => mailbox.GetMessageAsync(new("private", 7, 42), CancellationToken.None));
         await ErrorAsync(MailboxError.InvalidInput, () => mailbox.GetMessageAsync(new("INBOX", 0, 42), CancellationToken.None));
-        using var empty = new MailKitMailbox(server.Settings(folders: []));
+        using var empty = new MailKitMailbox(server.Settings(folders: []), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.DeniedFolder, () => empty.ListFoldersAsync(CancellationToken.None));
         await ErrorAsync(MailboxError.DeniedFolder, () => empty.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None));
         Assert.Equal(0, server.AcceptedConnections);
@@ -152,7 +152,7 @@ public sealed class MailKitMailboxTests
             });
         if (mode == "vanished") steps.Add(new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "{tag} OK vanished\r\n"));
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())), new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(Enum.Parse<MailboxError>(error), () => mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None));
         Assert.Single(await mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
@@ -164,7 +164,7 @@ public sealed class MailKitMailboxTests
     {
         await using var server = new ScriptedImapServer(new Session([
             new("LOGIN SYNTHETIC-username-sentinel SYNTHETIC-password-sentinel", "{tag} NO sensitive sentinel\r\n")]));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.AuthenticationFailed, () => mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
         Assert.Single(server.Commands);
@@ -179,7 +179,7 @@ public sealed class MailKitMailboxTests
             new("AUTHENTICATE PLAIN [A-Za-z0-9+/=]+", "{tag} NO sensitive sentinel\r\n")],
             Capabilities: "IMAP4rev1 SASL-IR AUTH=PLAIN" + (advertiseLogin ? " AUTH=LOGIN" : "")),
             new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(MailboxError.AuthenticationFailed, () => mailbox.ListFoldersAsync(default));
         Assert.Single(await mailbox.ListFoldersAsync(default));
         await server.VerifyAsync();
@@ -195,7 +195,7 @@ public sealed class MailKitMailboxTests
         steps[0] = new("AUTHENTICATE PLAIN [A-Za-z0-9+/=]+", "{tag} OK [CAPABILITY IMAP4rev1] authenticated\r\n");
         await using var server = new ScriptedImapServer(new Session(steps, StartTls: startTls,
             Capabilities: "IMAP4rev1 SASL-IR AUTH=PLAIN AUTH=LOGIN"));
-        using var mailbox = new MailKitMailbox(server.Settings(startTls ? BridgeTlsMode.StartTls : BridgeTlsMode.SslOnConnect));
+        using var mailbox = new MailKitMailbox(server.Settings(startTls ? BridgeTlsMode.StartTls : BridgeTlsMode.SslOnConnect), passwordSource: new SyntheticPasswordSource());
         Assert.Single(await mailbox.ListFoldersAsync(default));
         await server.VerifyAsync();
     }
@@ -210,7 +210,7 @@ public sealed class MailKitMailboxTests
             "* 1 FETCH (UID 42 BODY[TEXT] {1048577}\r\n", WaitForDisconnect: true));
         else steps.Add(Logout());
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal(ContentStatus.Oversized, result.ContentStatus);
         Assert.Null(result.Text);
@@ -226,7 +226,7 @@ public sealed class MailKitMailboxTests
         var structure = Plain.Replace("5 1", value.Length + " 1");
         if (html) structure = structure.Replace("PLAIN", "HTML");
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Body(value), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal(ContentStatus.Available, result.ContentStatus);
         if (html)
@@ -247,7 +247,7 @@ public sealed class MailKitMailboxTests
         const string attachment = "(\"APPLICATION\" \"OCTET-STREAM\" (\"NAME\" \"../synthetic.bin\") NIL NIL \"BASE64\" 900 NIL (\"ATTACHMENT\" (\"FILENAME\" \"../synthetic.bin\")) NIL NIL)";
         var structure = "((" + Plain + html + "\"ALTERNATIVE\")" + attachment + "\"MIXED\")";
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Body(section: "1.1"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal("hello", result.Text);
         var metadata = Assert.Single(result.Attachments);
@@ -270,7 +270,7 @@ public sealed class MailKitMailboxTests
             new("UID SEARCH FROM sender OR TO recipient CC recipient SUBJECT subject SENTSINCE 1-Oct-2026 SENTBEFORE 18-Oct-2026 UNSEEN",
                 "* SEARCH " + string.Join(' ', Enumerable.Range(1, matchesCount).Select(value => value * 2)) + "\r\n{tag} OK search\r\n"),
             new(@"UID FETCH " + ids + @" \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", response + "{tag} OK fetched\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var request = new SearchRequest("INBOX", "sender", "recipient", "subject", new(2026, 10, 1), new(2026, 10, 18), true);
         if (limit != 20) request = request with { Limit = limit };
         var result = await mailbox.SearchAsync(request, CancellationToken.None);
@@ -291,7 +291,7 @@ public sealed class MailKitMailboxTests
         await using var server = new ScriptedImapServer(new Session(Login(Examine(),
             new("UID SEARCH " + query, "* SEARCH 42\r\n{tag} OK search\r\n"),
             new(@"UID FETCH 42 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", response), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.SearchAsync(new("INBOX",
             SentStart: start ? new DateOnly(2025, 4, 1) : null,
             SentEnd: end ? new DateOnly(2025, 4, 2) : null), CancellationToken.None);
@@ -308,7 +308,7 @@ public sealed class MailKitMailboxTests
     public async Task UnreadTriStateAndEmptySearch(string command, bool? unread)
     {
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), new(command, "* SEARCH\r\n{tag} OK empty\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.SearchAsync(new("inbox", Unread: unread), CancellationToken.None);
         Assert.Empty(result.Messages);
         Assert.False(result.Truncated);
@@ -322,7 +322,7 @@ public sealed class MailKitMailboxTests
             new("LIST \"\" Missing", "{tag} OK absent\r\n"),
             new("LIST \"\" Parent", "* LIST (\\Noselect) \"/\" Parent\r\n{tag} OK list\r\n"),
             new("LIST \"\" Approved", "* LIST () \"/\" Unapproved\r\n* LIST () \"/\" Approved\r\n{tag} OK list\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(folders: ["INBOX", "Missing", "Parent", "Approved"]));
+        using var mailbox = new MailKitMailbox(server.Settings(folders: ["INBOX", "Missing", "Parent", "Approved"]), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.ListFoldersAsync(CancellationToken.None);
         Assert.Equal(new[] { "INBOX", "Approved" }, result.Select(item => item.Name));
         await server.VerifyAsync();
@@ -335,7 +335,7 @@ public sealed class MailKitMailboxTests
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(),
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "* 1 FETCH (UID 42 BODY[TEXT] {5}\r\nhe", WaitForDisconnect: true, Reached: reached))),
             new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         using var firstCancellation = new CancellationTokenSource();
         var first = mailbox.GetMessageAsync(new("INBOX", 7, 42), firstCancellation.Token);
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -364,7 +364,7 @@ public sealed class MailKitMailboxTests
         var steps = duringLogout ? Login(new Step("LOGOUT", WaitForDisconnect: true)) :
             Login(Examine(), new("UID SEARCH ALL", WaitForDisconnect: true));
         await using var server = new ScriptedImapServer(new Session(steps), new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings()) { OperationDeadline = TimeSpan.FromMilliseconds(500) };
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource()) { OperationDeadline = TimeSpan.FromMilliseconds(500) };
         await ErrorAsync(MailboxError.Timeout, () => duringLogout ? mailbox.ListFoldersAsync(CancellationToken.None) :
             (Task)mailbox.SearchAsync(new("INBOX"), CancellationToken.None));
         Assert.Single(await mailbox.ListFoldersAsync(CancellationToken.None));
@@ -383,7 +383,7 @@ public sealed class MailKitMailboxTests
         var steps = new List<Step> { new("LIST \"\" Approved", listing) };
         if (mode == "examine-denied") steps.Add(new("EXAMINE Approved", "{tag} NO cannot examine\r\n"));
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())));
-        using var mailbox = new MailKitMailbox(server.Settings(folders: ["INBOX", "Approved"]));
+        using var mailbox = new MailKitMailbox(server.Settings(folders: ["INBOX", "Approved"]), passwordSource: new SyntheticPasswordSource());
         await ErrorAsync(mode == "examine-denied" ? MailboxError.ProtocolFailure : MailboxError.FolderUnavailable,
             () => mailbox.GetMessageAsync(new("Approved", 7, 42), CancellationToken.None));
         await server.VerifyAsync();
@@ -402,7 +402,7 @@ public sealed class MailKitMailboxTests
             _ => "NIL"
         };
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Null(result.Text);
         Assert.Equal(mode == "missing" ? ContentStatus.Missing : ContentStatus.Unsupported, result.ContentStatus);
@@ -416,7 +416,7 @@ public sealed class MailKitMailboxTests
         const string attachment = "(\"APPLICATION\" \"OCTET-STREAM\" NIL NIL NIL \"BASE64\" 100 NIL (\"ATTACHMENT\" (\"FILENAME\" \"synthetic.bin\")) NIL NIL)";
         var structure = "(" + Plain + string.Concat(Enumerable.Repeat(attachment, 101)) + "\"MIXED\")";
         await using var server = new ScriptedImapServer(new Session(Login(Examine(), Summary(structure), Body(section: "1"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal(100, result.Attachments.Count);
         Assert.True(result.AttachmentsTruncated);
@@ -429,7 +429,7 @@ public sealed class MailKitMailboxTests
         var value = new string('x', MimeText.MaxTransferBytes);
         await using var server = new ScriptedImapServer(new Session(Login(Examine(),
             Summary(Plain.Replace("5 1", value.Length + " 1")), Body(value), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.GetMessageAsync(new("INBOX", 7, 42), CancellationToken.None);
         Assert.Equal(ContentStatus.Available, result.ContentStatus);
         Assert.Equal(32000, result.Text!.Length);
@@ -446,7 +446,7 @@ public sealed class MailKitMailboxTests
             new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "* 1 FETCH (UID 42 BODY[TEXT] {5}\r\nhe", WaitForDisconnect: true, Reached: reached))),
             new Session(Login(Logout())));
         var clock = new ManualDeadlineClock();
-        using var mailbox = new MailKitMailbox(server.Settings()) { DeadlineClock = clock };
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource()) { DeadlineClock = clock };
         using var cancellation = new CancellationTokenSource();
         var first = mailbox.GetMessageAsync(new("INBOX", 7, 42), cancellation.Token);
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(5));

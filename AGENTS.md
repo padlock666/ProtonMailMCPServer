@@ -16,7 +16,7 @@ Build a small, read-only Proton Mail MCP server for Linux using C#/.NET 10, the 
 
 The design is approved. See `PLAN.md` for implemented phases and the next authorized scope. A plan alone does not authorize implementation of later phases. Once implementation is requested, carry out the authorized scope without repeatedly asking for routine implementation approval.
 
-For keyring work, read the credential/security contract and owner-change handling in `docs/KEYRING.md`; implementation authorization and acceptance remain in `PLAN.md`. Never use personal keyrings for synthetic tests.
+For keyring work, read the credential/security contract, desktop-prompt policy and owner-change handling in `docs/KEYRING.md`; implementation authorization and acceptance remain in `PLAN.md`. Never use personal keyrings for synthetic tests.
 
 Optional attachment downloads follow `docs/ATTACHMENT-DOWNLOADS.md` for private storage, retention and verification requirements; authorization records remain in `PLAN.md`.
 

@@ -3,10 +3,15 @@
   "Port": 1143,
   "TlsMode": "StartTls",
   "Username": "<bridge-imap-username>",
-  "PasswordFile": "/absolute/private/directory/bridge.password",
+  "Keyring": {
+    "Application": "ProtonMailMcp",
+    "Account": "BrigePassword"
+  },
   "CertificateFile": "/absolute/private/directory/bridge-public.pem",
   "FolderAccess": {
     "Mode": "Allowlist",
-    "AllowedFolders": ["INBOX"]
+    "AllowedFolders": [
+      "INBOX"
+    ]
   }
 }

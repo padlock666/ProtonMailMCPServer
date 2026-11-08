@@ -38,7 +38,7 @@ internal sealed class ScriptedImapServer : IAsyncDisposable
     public BridgeSettings Settings(BridgeTlsMode mode = BridgeTlsMode.SslOnConnect, byte[]? pin = null,
         string[]? folders = null, FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist,
         string[]? excludedFolders = null, string? downloadDirectory = null) => new(IPAddress.Loopback, Port, mode,
-            SyntheticConfiguration.SentinelUsername, SyntheticConfiguration.SentinelPassword,
+            SyntheticConfiguration.SentinelUsername, new KeyringSelector("ProtonMailMcp", "BrigePassword"),
             pin ?? CertificateDer, folders ?? (folderAccessMode == FolderAccessMode.AllExcept ? [] : ["INBOX"]),
             folderAccessMode, excludedFolders, downloadDirectory);
 

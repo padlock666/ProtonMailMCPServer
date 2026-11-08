@@ -10,7 +10,7 @@ internal sealed class SyntheticConfiguration : IDisposable
     public const string SentinelUsername = "SYNTHETIC-username-sentinel";
     public string DirectoryPath { get; } = Path.Combine(Path.GetTempPath(), "protonmcp-test-" + Guid.NewGuid().ToString("N"));
     public string ConfigPath => Path.Combine(DirectoryPath, "config.json");
-    public string PasswordPath => Path.Combine(DirectoryPath, "secret");
+    public string FixturePath => Path.Combine(DirectoryPath, "secret");
     public string CertificatePath => Path.Combine(DirectoryPath, "public.pem");
     public Dictionary<string, object?> Values { get; }
 
@@ -18,13 +18,13 @@ internal sealed class SyntheticConfiguration : IDisposable
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Tests require Linux.");
         Directory.CreateDirectory(DirectoryPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        File.WriteAllText(PasswordPath, SentinelPassword + "\n");
-        File.SetUnixFileMode(PasswordPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.WriteAllText(FixturePath, "SYNTHETIC-file-content");
+        File.SetUnixFileMode(FixturePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         WriteCertificate(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
         Values = new()
         {
             ["Port"] = 1143, ["TlsMode"] = "StartTls", ["Username"] = SentinelUsername,
-            ["PasswordFile"] = PasswordPath, ["CertificateFile"] = CertificatePath,
+            ["Keyring"] = new { Application = "ProtonMailMcp", Account = "BrigePassword" }, ["CertificateFile"] = CertificatePath,
             ["AllowedFolders"] = new[] { "INBOX", "Approved" }
         };
         Save();
@@ -58,5 +58,16 @@ internal sealed class SyntheticConfiguration : IDisposable
         File.SetUnixFileMode(CertificatePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
-    public void Dispose() => Directory.Delete(DirectoryPath, recursive: true);
+    private IsolatedKeyring? keyring;
+    public async Task<Dictionary<string, string?>> KeyringEnvironmentAsync()
+    {
+        keyring ??= await IsolatedKeyring.StartAsync();
+        return keyring.Environment.ToDictionary(p => p.Key, p => (string?)p.Value);
+    }
+
+    public void Dispose()
+    {
+        try { keyring?.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { Directory.Delete(DirectoryPath, recursive: true); }
+    }
 }

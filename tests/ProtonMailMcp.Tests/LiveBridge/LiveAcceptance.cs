@@ -12,6 +12,8 @@ using ProtonMailMcp.Contracts;
 using ProtonMailMcp.Credentials;
 using ProtonMailMcp.Mail;
 
+using ProtonMailMcp.Tests.Fixtures;
+
 namespace ProtonMailMcp.Tests.LiveBridge;
 
 // No discovery-time file reads or network access. Opt-in is evaluated before any local settings load.
@@ -94,7 +96,6 @@ public sealed class LiveAcceptance
             {
                 LiveManifest.Require(configFile.Length <= 65536, "configuration_too_large");
                 var config = await JsonSerializer.DeserializeAsync<ConfigurationDocument>(configFile, cancellationToken: token);
-                if (config?.PasswordFile is not null) ExternalValue(config.PasswordFile);
                 ExternalValue(config?.CertificateFile);
                 if (stage == "downloads") ExternalValue(config?.AttachmentDownloads?.Directory);
             }
@@ -183,9 +184,9 @@ public sealed class LiveAcceptance
                 using var key = ECDsa.Create();
                 using var wrongCert = new CertificateRequest("CN=synthetic.invalid", key, HashAlgorithmName.SHA256)
                     .CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
-                using var wrongPin = new MailKitMailbox(Copy(settings, settings.Password, wrongCert.RawData, preserveSource: true));
+                using var wrongPin = new MailKitMailbox(Copy(settings, wrongCert.RawData));
                 await ExpectError(() => wrongPin.SearchAsync(new(manifest.Folder), token), MailboxError.TlsFailed);
-                using var wrongPassword = new MailKitMailbox(Copy(settings, "SYNTHETIC-wrong-" + Guid.NewGuid().ToString("N"), settings.CertificateDer.ToArray()));
+                using var wrongPassword = new MailKitMailbox(settings, passwordSource: new SyntheticPasswordSource("SYNTHETIC-wrong-" + Guid.NewGuid().ToString("N")));
                 await ExpectError(() => wrongPassword.SearchAsync(new(manifest.Folder), token), MailboxError.AuthenticationFailed);
                 await mailbox.SearchAsync(new(manifest.Folder), token);
                 await VerifyState(settings, manifest, token);
@@ -212,9 +213,8 @@ public sealed class LiveAcceptance
             "download_fixture_required");
     }
 
-    private static BridgeSettings Copy(BridgeSettings s, string password, byte[] pin, bool preserveSource = false) =>
-        new(s.Host, s.Port, s.TlsMode, s.Username, password, pin, s.AllowedFolders, s.FolderAccessMode, s.ExcludedFolders,
-            passwordKeyring: preserveSource ? s.PasswordKeyring : null);
+    private static BridgeSettings Copy(BridgeSettings s, byte[] pin) =>
+        new(s.Host, s.Port, s.TlsMode, s.Username, s.Keyring, pin, s.AllowedFolders, s.FolderAccessMode, s.ExcludedFolders);
 
     internal static string RequireExternalPath(string? path, string repository)
     {
@@ -258,7 +258,7 @@ public sealed class LiveAcceptance
     }
 
     // Test-only observer: UID/FLAGS only, no envelopes, bodies, protocol logging, or folder close.
-    internal static async Task VerifyState(BridgeSettings settings, LiveManifest manifest, CancellationToken token)
+    internal static async Task VerifyState(BridgeSettings settings, LiveManifest manifest, CancellationToken token, IPasswordSource? passwordSource = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -274,7 +274,7 @@ public sealed class LiveAcceptance
         await client.ConnectAsync(settings.Host.ToString(), settings.Port,
             settings.TlsMode == BridgeTlsMode.StartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.SslOnConnect, token);
         LiveManifest.Require(client.IsSecure && settings.IsFolderAllowed(manifest.Folder), "observer_policy_failed");
-        using (var password = await PasswordSources.Create(settings).GetAsync(token))
+        using (var password = await (passwordSource ?? PasswordSources.Create(settings)).GetAsync(token))
         {
             token.ThrowIfCancellationRequested();
             await client.AuthenticateAsync(Encoding.UTF8, new MailKitMailbox.SingleAttemptCredentials(settings.Username, password.Value), token);

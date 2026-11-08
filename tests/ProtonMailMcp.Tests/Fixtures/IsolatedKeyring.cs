@@ -70,9 +70,7 @@ internal sealed class IsolatedKeyring : IAsyncDisposable
 
     internal static void Select(SyntheticConfiguration config)
     {
-        config.Values.Remove("PasswordFile");
-        config.Values["PasswordKeyring"] = new { CollectionAlias = "default", ItemId = "44ec5121-59ce-4c39-8b45-551823feb631" };
-        File.Delete(config.PasswordPath); // proves the legacy file is never accessed
+        config.Values["Keyring"] = new { Application = "ProtonMailMcp", Account = "BrigePassword" };
         config.Save();
     }
 
@@ -142,8 +140,17 @@ internal sealed class KeyringApplication : IAsyncDisposable
     }
     internal async Task<JsonDocument> CallAsync()
     {
-        await BeginCallAsync();
-        return await ResponseAsync();
+        var requestId = await BeginCallAsync();
+        while (true)
+        {
+            var response = await ResponseAsync();
+            var responseId = response.RootElement.GetProperty("id").GetInt32();
+            if (responseId == requestId) return response;
+            // A cancelled request may still receive a reply. Do not attribute that reply
+            // to a later operation when verifying cancellation and fresh-call recovery.
+            Assert.True(responseId < requestId);
+            response.Dispose();
+        }
     }
     internal async Task<JsonDocument> DiscoverAsync()
     {
@@ -186,9 +193,12 @@ internal sealed class KeyringApplication : IAsyncDisposable
                 Assert.DoesNotContain(SyntheticConfiguration.SentinelPassword, line);
             }
             var diagnostics = await errors;
+
             Assert.DoesNotContain(SyntheticConfiguration.SentinelPassword, diagnostics);
             Assert.DoesNotContain(SyntheticConfiguration.SentinelUsername, diagnostics);
-            Assert.DoesNotContain("44ec5121", diagnostics);
+            Assert.DoesNotContain("ProtonMailMcp", diagnostics);
+            foreach (var line in diagnostics.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                Assert.Matches(@"\Atool: (list_folders|search_messages|get_message|download_attachment) correlation=[a-f0-9]{32} duration_ms=[0-9]+ outcome=[a-z_]+\z", line);
             Assert.DoesNotContain("org.freedesktop", diagnostics);
             Assert.DoesNotContain("unix:", diagnostics);
             Assert.DoesNotContain("SYNTHETIC-native-error", diagnostics);

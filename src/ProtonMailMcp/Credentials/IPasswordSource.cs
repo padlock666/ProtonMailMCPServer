@@ -17,15 +17,5 @@ internal sealed class PasswordLease(string value) : IDisposable
 
 internal static class PasswordSources
 {
-    internal static IPasswordSource Create(BridgeSettings settings) => settings.PasswordKeyring is { } selector
-        ? new LibsecretPasswordSource(selector) : new FileSnapshot(settings.Password);
-
-    private sealed class FileSnapshot(string password) : IPasswordSource
-    {
-        public Task<PasswordLease> GetAsync(CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(new PasswordLease(password));
-        }
-    }
+    internal static IPasswordSource Create(BridgeSettings settings) => new LibsecretPasswordSource(settings.Keyring);
 }

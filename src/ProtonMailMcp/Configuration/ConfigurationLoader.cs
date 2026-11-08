@@ -41,40 +41,21 @@ internal static class ConfigurationLoader
                 throw new ConfigurationException("configuration_username_invalid");
             var (folderMode, allowedFolders, excludedFolders) = ReadFolderAccess(document, json.RootElement);
             RequireAbsolutePath(document.CertificateFile);
-            var hasFile = json.RootElement.TryGetProperty("PasswordFile", out _);
-            var hasKeyring = json.RootElement.TryGetProperty("PasswordKeyring", out _);
-            if (hasFile == hasKeyring) throw new ConfigurationException("configuration_password_source_invalid");
-            KeyringSelector? selector = null;
-            if (hasFile) RequireAbsolutePath(document.PasswordFile);
-            else
-            {
-                var keyring = document.PasswordKeyring;
-                if (keyring?.CollectionAlias != "default" || !Guid.TryParseExact(keyring.ItemId, "D", out var id) ||
-                    id == Guid.Empty || id.ToString("D") != keyring.ItemId)
-                    throw new ConfigurationException("configuration_password_keyring_invalid");
-                selector = new("default", keyring.ItemId!);
-            }
+            var keyring = document.Keyring;
+            if (!ValidAttribute(keyring?.Application) || !ValidAttribute(keyring?.Account))
+                throw new ConfigurationException("configuration_keyring_invalid");
+            var selector = new KeyringSelector(keyring!.Application!, keyring.Account!);
             string? downloadDirectory = null;
             if (json.RootElement.TryGetProperty("AttachmentDownloads", out _))
             {
                 downloadDirectory = document.AttachmentDownloads?.Directory;
                 LinuxProtectedFile.ValidateDownloadPath(downloadDirectory);
-                foreach (var protectedPath in new[] { path, document.PasswordFile, document.CertificateFile! }.OfType<string>())
+                foreach (var protectedPath in new[] { path, document.CertificateFile! })
                     if (Path.GetFullPath(protectedPath).StartsWith(downloadDirectory + "/", StringComparison.Ordinal))
                         throw new ConfigurationException("configuration_download_directory_unsafe");
             }
             var certificateDer = await LoadCertificateAsync(document.CertificateFile!, cancellationToken);
-            if (selector is not null)
-                return new BridgeSettings(host, document.Port, tlsMode, document.Username, "",
-                    certificateDer, allowedFolders, folderMode, excludedFolders, downloadDirectory, selector);
-            await using var secret = LinuxProtectedFile.Open(document.PasswordFile!);
-            var password = new UTF8Encoding(false, true).GetString(await ReadBoundedAsync(secret, 4096, cancellationToken));
-            // Accept one conventional line ending, but never trim spaces from a credential.
-            if (password.EndsWith('\n')) password = password[..^1];
-            if (password.EndsWith('\r')) password = password[..^1];
-            if (string.IsNullOrWhiteSpace(password) || password.Any(char.IsControl))
-                throw new ConfigurationException("configuration_password_invalid");
-            return new BridgeSettings(host, document.Port, tlsMode, document.Username, password,
+            return new BridgeSettings(host, document.Port, tlsMode, document.Username, selector,
                 certificateDer, allowedFolders, folderMode, excludedFolders, downloadDirectory);
         }
         catch (OperationCanceledException) { throw; }
@@ -85,6 +66,9 @@ internal static class ConfigurationLoader
             throw new ConfigurationException("configuration_invalid_or_unavailable");
         }
     }
+
+    private static bool ValidAttribute(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && Encoding.UTF8.GetByteCount(value) <= 256 && !value.Any(char.IsControl);
 
     private static (FolderAccessMode Mode, string[] Allowed, string[] Excluded) ReadFolderAccess(
         ConfigurationDocument document, JsonElement root)

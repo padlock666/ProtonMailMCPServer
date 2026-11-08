@@ -7,7 +7,7 @@ internal static partial class LinuxProtectedFile
 {
     private const int NoFollow = 0x20000, CloseOnExec = 0x80000, NonBlock = 0x800, Directory = 0x10000;
 
-    internal enum FileKind { Password, Configuration, Certificate }
+    internal enum FileKind { Configuration, Certificate }
 
     internal static void ValidateDownloadPath(string? path)
     {
@@ -49,7 +49,7 @@ internal static partial class LinuxProtectedFile
         finally { parent?.Dispose(); }
     }
 
-    public static FileStream Open(string path, FileKind kind = FileKind.Password)
+    public static FileStream Open(string path, FileKind kind)
     {
         if (!OperatingSystem.IsLinux())
             throw new ConfigurationException("configuration_linux_required");
@@ -83,7 +83,7 @@ internal static partial class LinuxProtectedFile
             {
                 var file = Inspect(handle);
                 if ((file.Mode & 0xF000) != 0x8000 || !IsPrivate(file) ||
-                    (file.Mode & 0x100) == 0 || (kind == FileKind.Password && file.Size is 0 or > 4096))
+                    (file.Mode & 0x100) == 0)
                     throw new ConfigurationException(FileCode(kind, "file_unsafe"));
                 return new FileStream(handle, FileAccess.Read);
             }
@@ -115,7 +115,6 @@ internal static partial class LinuxProtectedFile
 
     private static string FileCode(FileKind kind, string suffix) => kind switch
     {
-        FileKind.Password => "configuration_password_" + suffix,
         FileKind.Configuration => "configuration_settings_" + suffix,
         FileKind.Certificate => "configuration_certificate_" + suffix,
         _ => throw new ArgumentOutOfRangeException(nameof(kind))

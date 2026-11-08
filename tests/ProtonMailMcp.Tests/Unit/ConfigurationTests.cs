@@ -19,7 +19,7 @@ public sealed class ConfigurationTests
         fixture.Save();
         var settings = await ConfigurationLoader.LoadAsync(fixture.ConfigPath, CancellationToken.None);
         Assert.Equal(host ?? "127.0.0.1", settings.Host.ToString());
-        Assert.Equal(SyntheticConfiguration.SentinelPassword, settings.Password);
+        Assert.Equal("ProtonMailMcp", settings.Keyring.Application);
         Assert.NotEmpty(settings.CertificateDer.ToArray());
         Assert.DoesNotContain(SyntheticConfiguration.SentinelPassword, settings.ToString());
         Assert.True(settings.IsFolderAllowed("inbox"));
@@ -59,7 +59,7 @@ public sealed class ConfigurationTests
     [InlineData("Port")]
     [InlineData("TlsMode")]
     [InlineData("Username")]
-    [InlineData("PasswordFile")]
+    [InlineData("Keyring")]
     [InlineData("CertificateFile")]
     [InlineData("AllowedFolders")]
     public async Task RejectsMissingRequiredFields(string field)
@@ -75,10 +75,10 @@ public sealed class ConfigurationTests
     [InlineData(UnixFileMode.UserRead | UnixFileMode.OtherRead)]
     [InlineData(UnixFileMode.UserRead | UnixFileMode.GroupWrite)]
     [InlineData(UnixFileMode.UserWrite)]
-    public async Task RejectsUnsafePasswordModes(UnixFileMode mode)
+    public async Task RejectsUnsafeConfigurationModes(UnixFileMode mode)
     {
         using var fixture = new SyntheticConfiguration();
-        File.SetUnixFileMode(fixture.PasswordPath, mode);
+        File.SetUnixFileMode(fixture.ConfigPath, mode);
         await AssertSafeFailure(fixture);
     }
 
@@ -172,62 +172,15 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
-    public async Task RejectsSymlinkAndDirectoryPasswordPaths()
-    {
-        using var fixture = new SyntheticConfiguration();
-        var link = Path.Combine(fixture.DirectoryPath, "link");
-        File.CreateSymbolicLink(link, fixture.PasswordPath);
-        fixture.Values["PasswordFile"] = link;
-        fixture.Save();
-        await AssertSafeFailure(fixture);
-        fixture.Values["PasswordFile"] = fixture.DirectoryPath;
-        fixture.Save();
-        await AssertSafeFailure(fixture);
-    }
-
-    [Fact]
     public async Task RejectsFifoWithoutBlocking()
     {
         using var fixture = new SyntheticConfiguration();
-        File.Delete(fixture.PasswordPath);
+        File.Delete(fixture.CertificatePath);
         var info = new System.Diagnostics.ProcessStartInfo("mkfifo") { UseShellExecute = false };
-        info.ArgumentList.Add(fixture.PasswordPath);
+        info.ArgumentList.Add(fixture.CertificatePath);
         using var process = System.Diagnostics.Process.Start(info)!;
         await process.WaitForExitAsync();
         Assert.Equal(0, process.ExitCode);
-        await AssertSafeFailure(fixture);
-    }
-
-    [Fact]
-    public async Task ReadsTheValidatedHandleAfterPathReplacement()
-    {
-        using var fixture = new SyntheticConfiguration();
-        await using var stream = LinuxProtectedFile.Open(fixture.PasswordPath);
-        File.Move(fixture.PasswordPath, fixture.PasswordPath + ".old");
-        File.WriteAllText(fixture.PasswordPath, "SYNTHETIC-replacement");
-        using var reader = new StreamReader(stream);
-        Assert.Equal(SyntheticConfiguration.SentinelPassword + "\n", await reader.ReadToEndAsync());
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("\n")]
-    [InlineData("synthetic\nextra")]
-    [InlineData("synthetic\0")]
-    public async Task RejectsInvalidPasswords(string password)
-    {
-        using var fixture = new SyntheticConfiguration();
-        File.WriteAllText(fixture.PasswordPath, password);
-        await AssertSafeFailure(fixture);
-    }
-
-    [Fact]
-    public async Task RejectsOversizedAndInvalidUtf8Passwords()
-    {
-        using var fixture = new SyntheticConfiguration();
-        File.WriteAllText(fixture.PasswordPath, new string('x', 4097));
-        await AssertSafeFailure(fixture);
-        File.WriteAllBytes(fixture.PasswordPath, [0xFF]);
         await AssertSafeFailure(fixture);
     }
 

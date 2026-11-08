@@ -18,21 +18,20 @@ internal sealed class ConfigurationDocument
     public int Port { get; init; }
     public string? TlsMode { get; init; }
     public string? Username { get; init; }
-    public string? PasswordFile { get; init; }
-    public PasswordKeyringDocument? PasswordKeyring { get; init; }
+    public KeyringDocument? Keyring { get; init; }
     public string? CertificateFile { get; init; }
     public string[]? AllowedFolders { get; init; }
     public FolderAccessDocument? FolderAccess { get; init; }
     public AttachmentDownloadsDocument? AttachmentDownloads { get; init; }
 }
 
-internal sealed class PasswordKeyringDocument
+internal sealed class KeyringDocument
 {
-    public string? CollectionAlias { get; init; }
-    public string? ItemId { get; init; }
+    public string? Application { get; init; }
+    public string? Account { get; init; }
 }
 
-internal sealed record KeyringSelector(string CollectionAlias, string ItemId);
+internal sealed record KeyringSelector(string Application, string Account);
 
 internal sealed class AttachmentDownloadsDocument
 {
@@ -42,16 +41,15 @@ internal sealed class AttachmentDownloadsDocument
 // Deliberately not a record: generated ToString must never disclose credentials/settings.
 internal sealed class BridgeSettings(
     IPAddress host, int port, BridgeTlsMode tlsMode, string username,
-    string password, byte[] certificateDer, IEnumerable<string> allowedFolders,
+    KeyringSelector keyring, byte[] certificateDer, IEnumerable<string> allowedFolders,
     FolderAccessMode folderAccessMode = FolderAccessMode.Allowlist, IEnumerable<string>? excludedFolders = null,
-    string? downloadDirectory = null, KeyringSelector? passwordKeyring = null)
+    string? downloadDirectory = null)
 {
     public IPAddress Host { get; } = host;
     public int Port { get; } = port;
     public BridgeTlsMode TlsMode { get; } = tlsMode;
     public string Username { get; } = username;
-    public string Password { get; } = password;
-    public KeyringSelector? PasswordKeyring { get; } = passwordKeyring;
+    public KeyringSelector Keyring { get; } = keyring;
     public ReadOnlyMemory<byte> CertificateDer { get; } = certificateDer;
     public IReadOnlyList<string> AllowedFolders { get; } = Array.AsReadOnly(allowedFolders.ToArray());
     public FolderAccessMode FolderAccessMode { get; } = folderAccessMode;

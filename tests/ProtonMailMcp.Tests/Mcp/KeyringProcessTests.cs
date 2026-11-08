@@ -12,7 +12,7 @@ public sealed class KeyringProcessTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DiscoveryNeedsNeitherBusNorPasswordFile(bool downloads)
+    public async Task DiscoveryNeedsNoBus(bool downloads)
     {
         using var config = new SyntheticConfiguration();
         IsolatedKeyring.Select(config);
@@ -82,26 +82,6 @@ public sealed class KeyringProcessTests
     }
 
     [Fact]
-    public async Task LegacyFileSourceNeedsNeitherBusNorWorkingLibsecret()
-    {
-        await using var server = new ScriptedImapServer(new Session(Login(Logout())));
-        using var config = new SyntheticConfiguration();
-        config.Values["Port"] = server.Port;
-        config.Values["TlsMode"] = "SslOnConnect";
-        config.Values["AllowedFolders"] = new[] { "INBOX" };
-        File.WriteAllBytes(config.CertificatePath, server.CertificateDer);
-        config.Save();
-        var native = Path.Combine(config.DirectoryPath, "native");
-        Directory.CreateDirectory(native);
-        File.CreateSymbolicLink(Path.Combine(native, "libsecret-1.so.0"), "/lib/x86_64-linux-gnu/libc.so.6");
-        await using var app = await KeyringApplication.StartAsync(config, new Dictionary<string, string>
-        { ["PATH"] = "/usr/bin:/bin", ["LD_LIBRARY_PATH"] = native });
-        using var result = await app.CallAsync();
-        KeyringApplication.Success(result);
-        await server.VerifyAsync();
-    }
-
-    [Fact]
     public async Task PublishedNativeLookupObservesExactByteLimitAndPreservesSpaces()
     {
         foreach (var password in new[] { " surrounding spaces ", new string('x', 4096) })
@@ -150,7 +130,7 @@ public sealed class KeyringProcessTests
         await using (var app = await KeyringApplication.StartAsync(config, keyring.Environment))
         {
             await app.BeginCallAsync();
-            await KeyringPasswordTests.ReachedAsync(keyring, "ReadAlias");
+            await KeyringPasswordTests.ReachedAsync(keyring, "SearchItems");
             app.CloseInput();
         }
         await server.VerifyAsync();

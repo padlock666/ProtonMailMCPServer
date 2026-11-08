@@ -38,12 +38,7 @@ public sealed class KeyringPasswordTests
     }
 
     [Theory]
-    [InlineData("missing-alias", "credential_not_found")]
     [InlineData("missing-item", "credential_not_found")]
-    [InlineData("locked-collection", "credential_locked")]
-    [InlineData("locked-item", "credential_locked")]
-    [InlineData("duplicate", "credential_ambiguous")]
-    [InlineData("attributes", "credential_invalid")]
     [InlineData("denied", "credential_unavailable")]
     [InlineData("deleted", "credential_not_found")]
     [InlineData("lock-during-load", "credential_locked")]
@@ -61,13 +56,65 @@ public sealed class KeyringPasswordTests
         using (var stats = await keyring.StatsAsync())
         {
             var calls = stats.RootElement.GetProperty("calls").EnumerateArray().Select(c => c.GetString()).ToArray();
-            Assert.DoesNotContain(calls, c => c!.Contains("Unlock") || c.Contains("Prompt") || c.Contains("Set") || c.Contains("Create") || c.Contains("Delete"));
-            if (mode is "duplicate" or "locked-collection" or "locked-item") Assert.DoesNotContain("GetSecret", calls);
+            Assert.DoesNotContain(calls, c => c!.Contains("Set") || c.Contains("Create") || c.Contains("Delete"));
         }
         await keyring.ConfigureAsync("success");
         using var recovered = await app.CallAsync();
         KeyringApplication.Success(recovered);
         await server.VerifyAsync();
+    }
+
+    [Theory]
+    [InlineData("locked-item")]
+    [InlineData("prompt")]
+    [InlineData("duplicate")]
+    public async Task DemoLookupAllowsUnlockAndSelectsRetrievableMatch(string mode)
+    {
+        await using var keyring = await IsolatedKeyring.StartAsync();
+        await keyring.ConfigureAsync(mode);
+        await using var server = new ScriptedImapServer(new Session(Login(Logout())));
+        using var config = Configure(server);
+        await using var app = await KeyringApplication.StartAsync(config, keyring.Environment);
+        using var result = await app.CallAsync();
+        KeyringApplication.Success(result);
+        if (mode == "prompt")
+        {
+            using var stats = await keyring.StatsAsync();
+            Assert.Contains(stats.RootElement.GetProperty("calls").EnumerateArray(), c => c.GetString() == "Prompt");
+        }
+        await server.VerifyAsync();
+    }
+
+    [Fact]
+    public async Task DismissedUnlockPromptDoesNotAuthenticate()
+    {
+        await using var keyring = await IsolatedKeyring.StartAsync();
+        await keyring.ConfigureAsync("dismiss-prompt");
+        await using var server = new ScriptedImapServer(new Session([]));
+        using var config = Configure(server);
+        await using var app = await KeyringApplication.StartAsync(config, keyring.Environment);
+        using var result = await app.CallAsync();
+        KeyringApplication.Error(result, "credential_not_found");
+        await server.VerifyAsync();
+        Assert.Empty(server.Commands);
+    }
+
+    [Theory]
+    [InlineData("ProtonMailMcp", "different")]
+    [InlineData("different", "BrigePassword")]
+    [InlineData("PROTONMAILMCP", "BrigePassword")]
+    public async Task ApplicationAndAccountAttributesMustMatchExactly(string application, string account)
+    {
+        await using var keyring = await IsolatedKeyring.StartAsync();
+        await using var server = new ScriptedImapServer(new Session([]));
+        using var config = Configure(server);
+        config.Values["Keyring"] = new { Application = application, Account = account };
+        config.Save();
+        await using var app = await KeyringApplication.StartAsync(config, keyring.Environment);
+        using var result = await app.CallAsync();
+        KeyringApplication.Error(result, "credential_not_found");
+        await server.VerifyAsync();
+        Assert.Empty(server.Commands);
     }
 
     [Theory]
@@ -101,7 +148,7 @@ public sealed class KeyringPasswordTests
         get
         {
             var data = new TheoryData<string>();
-            foreach (var stage in new[] { "alias", "search", "load", "completion" })
+            foreach (var stage in new[] { "search", "load", "completion" })
                 foreach (var transition in new[] { "loss", "replace", "reacquire", "back" })
                     data.Add("owner-" + stage + "-" + transition);
             return data;
@@ -129,7 +176,7 @@ public sealed class KeyringPasswordTests
     }
 
     [Theory]
-    [InlineData("stall-alias", "ReadAlias")]
+    [InlineData("stall-prompt", "Prompt")]
     [InlineData("stall-search", "SearchItems")]
     [InlineData("stall-load", "GetSecret")]
     public async Task RemoteCancellationDrainsNativeCallbackAndReleasesMailboxGate(string mode, string reached)

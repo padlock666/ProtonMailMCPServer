@@ -30,35 +30,18 @@ public sealed class GnomePasswordTests
     }
 
     [KeyringIntegrationFact]
-    public async Task LockedGnomeCollectionFailsWithoutUiOrAuthentication()
-    {
-        await using var keyring = await IsolatedKeyring.StartAsync(gnome: true);
-        await keyring.ConfigureAsync("locked-collection");
-        await using var server = new ScriptedImapServer(new Session([]));
-        using var config = KeyringPasswordTests.Configure(server);
-        await using var app = await KeyringApplication.StartAsync(config, keyring.Environment);
-        using var result = await app.CallAsync();
-        KeyringApplication.Error(result, "credential_locked");
-        using var stats = await keyring.StatsAsync();
-        Assert.DoesNotContain(stats.RootElement.GetProperty("calls").EnumerateArray(), c => c.GetString() is "Unlock" or "Prompt" or "GetSecret");
-        await server.VerifyAsync();
-        Assert.Empty(server.Commands);
-    }
-
-    [KeyringIntegrationFact]
-    public async Task GnomeDuplicatesAndMissingItemsFailThenExplicitCallerRecovers()
+    public async Task GnomeDuplicatesUseRetrievableMatchAndMissingItemFails()
     {
         await using var keyring = await IsolatedKeyring.StartAsync(gnome: true);
         await keyring.ConfigureAsync("duplicate");
-        await using var server = new ScriptedImapServer(new Session([]), new Session([]), new Session(Login(Logout())));
+        await using var server = new ScriptedImapServer(new Session(Login(Logout())), new Session([]), new Session(Login(Logout())));
         using var config = KeyringPasswordTests.Configure(server);
         await using var app = await KeyringApplication.StartAsync(config, keyring.Environment);
-        using var ambiguous = await app.CallAsync();
-        KeyringApplication.Error(ambiguous, "credential_ambiguous");
+        using var duplicate = await app.CallAsync();
+        KeyringApplication.Success(duplicate);
         await keyring.ConfigureAsync("missing-item");
         using var missing = await app.CallAsync();
         KeyringApplication.Error(missing, "credential_not_found");
-        Assert.Empty(server.Commands);
         await keyring.ConfigureAsync("success");
         using var recovered = await app.CallAsync();
         KeyringApplication.Success(recovered);

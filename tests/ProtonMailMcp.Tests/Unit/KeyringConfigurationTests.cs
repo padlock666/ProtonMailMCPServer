@@ -10,48 +10,64 @@ namespace ProtonMailMcp.Tests.Unit;
 public sealed class KeyringConfigurationTests
 {
     [Fact]
-    public async Task SelectorLoadsWithoutFileOrBusLookup()
+    public async Task SelectorLoadsWithoutBusLookup()
     {
         using var config = new SyntheticConfiguration();
-        IsolatedKeyring.Select(config);
         var settings = await ConfigurationLoader.LoadAsync(config.ConfigPath, default);
-        Assert.Equal("default", settings.PasswordKeyring!.CollectionAlias);
-        Assert.Empty(settings.Password);
+        Assert.Equal("ProtonMailMcp", settings.Keyring.Application);
+        Assert.Equal("BrigePassword", settings.Keyring.Account);
     }
 
     [Theory]
-    [InlineData("both")]
-    [InlineData("both-null")]
-    [InlineData("neither")]
-    [InlineData("null")]
-    [InlineData("alias")]
-    [InlineData("uppercase")]
-    [InlineData("zero")]
     [InlineData("missing")]
+    [InlineData("null")]
+    [InlineData("blank")]
+    [InlineData("missing-account")]
+    [InlineData("missing-application")]
+    [InlineData("null-account")]
+    [InlineData("null-application")]
+    [InlineData("control")]
+    [InlineData("oversized")]
     [InlineData("unknown")]
     [InlineData("wrong-type")]
     [InlineData("duplicate")]
+    [InlineData("old-file")]
+    [InlineData("old-keyring")]
     public async Task InvalidSelectorsFailClosed(string mode)
     {
         using var config = new SyntheticConfiguration();
-        IsolatedKeyring.Select(config);
-        var id = "44ec5121-59ce-4c39-8b45-551823feb631";
-        if (mode == "both") config.Values["PasswordFile"] = config.PasswordPath;
-        if (mode == "both-null") config.Values["PasswordFile"] = null;
-        if (mode == "neither") config.Values.Remove("PasswordKeyring");
-        if (mode == "null") config.Values["PasswordKeyring"] = null;
-        if (mode == "alias") config.Values["PasswordKeyring"] = new { CollectionAlias = "Default", ItemId = id };
-        if (mode == "uppercase") config.Values["PasswordKeyring"] = new { CollectionAlias = "default", ItemId = id.ToUpperInvariant() };
-        if (mode == "zero") config.Values["PasswordKeyring"] = new { CollectionAlias = "default", ItemId = Guid.Empty.ToString() };
-        if (mode == "missing") config.Values["PasswordKeyring"] = new { CollectionAlias = "default" };
-        if (mode == "unknown") config.Values["PasswordKeyring"] = new { CollectionAlias = "default", ItemId = id, Label = "synthetic" };
-        if (mode == "wrong-type") config.Values["PasswordKeyring"] = "synthetic";
+        if (mode == "missing") config.Values.Remove("Keyring");
+        if (mode == "null") config.Values["Keyring"] = null;
+        if (mode == "missing-account") config.Values["Keyring"] = new { Application = "app" };
+        if (mode == "missing-application") config.Values["Keyring"] = new { Account = "BrigePassword" };
+        if (mode == "null-account") config.Values["Keyring"] = new { Application = "app", Account = (string?)null };
+        if (mode == "null-application") config.Values["Keyring"] = new { Application = (string?)null, Account = "BrigePassword" };
+        if (mode == "blank") config.Values["Keyring"] = new { Application = " ", Account = "BrigePassword" };
+        if (mode == "control") config.Values["Keyring"] = new { Application = "app", Account = "a\0b" };
+        if (mode == "oversized") config.Values["Keyring"] = new { Application = new string('x', 257), Account = "BrigePassword" };
+        if (mode == "unknown") config.Values["Keyring"] = new { Application = "app", Account = "BrigePassword", Label = "ignored" };
+        if (mode == "wrong-type") config.Values["Keyring"] = "synthetic";
+        if (mode == "old-file") config.Values["PasswordFile"] = config.FixturePath;
+        if (mode == "old-keyring") config.Values["PasswordKeyring"] = new { CollectionAlias = "default", ItemId = Guid.NewGuid().ToString() };
         config.Save();
         if (mode == "duplicate")
-            File.WriteAllText(config.ConfigPath, File.ReadAllText(config.ConfigPath).Replace("\"CollectionAlias\":\"default\"", "\"CollectionAlias\":\"default\",\"CollectionAlias\":\"default\""));
+            File.WriteAllText(config.ConfigPath, File.ReadAllText(config.ConfigPath).Replace("\"Account\":\"BrigePassword\"", "\"Account\":\"BrigePassword\",\"Account\":\"BrigePassword\""));
         var error = await Assert.ThrowsAsync<ConfigurationException>(() => ConfigurationLoader.LoadAsync(config.ConfigPath, default));
         Assert.StartsWith("configuration_", error.Message);
         Assert.Null(error.InnerException);
+    }
+
+    [Fact]
+    public async Task SelectorLimitsCountUtf8Bytes()
+    {
+        using var config = new SyntheticConfiguration();
+        config.Values["Keyring"] = new { Application = new string('é', 128), Account = "BrigePassword" };
+        config.Save();
+        _ = await ConfigurationLoader.LoadAsync(config.ConfigPath, default);
+        config.Values["Keyring"] = new { Application = new string('é', 129), Account = "BrigePassword" };
+        config.Save();
+        Assert.Equal("configuration_keyring_invalid", (await Assert.ThrowsAsync<ConfigurationException>(() =>
+            ConfigurationLoader.LoadAsync(config.ConfigPath, default))).Message);
     }
 
     [Theory]

@@ -490,6 +490,7 @@ public sealed class ToolTests
             host.Client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
             {
                 Command = "dotnet", Arguments = [TestApplication.Path, "--config", host.config.ConfigPath],
+                EnvironmentVariables = await host.config.KeyringEnvironmentAsync(),
                 Name = "SyntheticPhase3", StandardErrorLines = line => host.stderr.Enqueue(line)
             }), new McpClientOptions { InitializationTimeout = TimeSpan.FromSeconds(10), ProtocolVersion = "2025-11-25" });
             return host;

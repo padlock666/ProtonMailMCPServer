@@ -19,7 +19,7 @@ public sealed class LiveObserverTests
         {
             Folder = "INBOX", UidValidity = 7,
             Messages = [new LiveFixture { Uid = 42, Flags = 8, Keywords = ["synthetic-keyword"] }]
-        }, CancellationToken.None);
+        }, CancellationToken.None, new SyntheticPasswordSource());
         await server.VerifyAsync();
     }
 
@@ -28,7 +28,7 @@ public sealed class LiveObserverTests
     {
         await using var server = new ScriptedImapServer(new Session(Login(Examine())));
         await Assert.ThrowsAsync<InvalidOperationException>(() => LiveAcceptance.VerifyState(server.Settings(),
-            new LiveManifest { Folder = "INBOX", UidValidity = 8 }, CancellationToken.None));
+            new LiveManifest { Folder = "INBOX", UidValidity = 8 }, CancellationToken.None, new SyntheticPasswordSource()));
         await server.VerifyAsync();
     }
 }

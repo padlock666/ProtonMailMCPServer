@@ -34,7 +34,7 @@ public sealed class SearchPaginationTests
             sessions.Add(Page(query, remaining.Reverse().ToArray(), remaining.Take(limit).ToArray()));
         }
         await using var server = new ScriptedImapServer(sessions.ToArray());
-        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: allExcept ? FolderAccessMode.AllExcept : FolderAccessMode.Allowlist));
+        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: allExcept ? FolderAccessMode.AllExcept : FolderAccessMode.Allowlist), passwordSource: new SyntheticPasswordSource());
         var actual = new List<uint>();
         string? cursor = null;
         do
@@ -64,7 +64,7 @@ public sealed class SearchPaginationTests
         if (count > 0) steps.Add(Fetch(matches.Take(limit).ToArray()));
         steps.Add(Logout());
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var page = await mailbox.SearchAsync(new("INBOX", Limit: limit), CancellationToken.None);
         Assert.Equal(matches.Take(limit), page.Messages.Select(m => m.Reference.Uid));
         Assert.Equal(count > limit, page.Truncated);
@@ -76,7 +76,7 @@ public sealed class SearchPaginationTests
     public async Task DuplicateSearchIdsAndUnsolicitedSummariesCannotRepeatOrBroadenPage()
     {
         await using var server = new ScriptedImapServer(Page("ALL", [10, 30, 50, 50], [50, 30], [10, 30, 50]));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var page = await mailbox.SearchAsync(new("INBOX", Limit: 2), CancellationToken.None);
         Assert.Equal(new uint[] { 50, 30 }, page.Messages.Select(m => m.Reference.Uid));
         Assert.True(page.Truncated);
@@ -93,7 +93,7 @@ public sealed class SearchPaginationTests
             // UID 100 has arrived and UID 70 vanished; only UIDs below 70 may match.
             Page("UID 1:69", [10, 30, 50], [50, 30]),
             new Session(Login(Examine(), Search("UID 1:29"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings());
+        using var mailbox = new MailKitMailbox(server.Settings(), passwordSource: new SyntheticPasswordSource());
         var first = await mailbox.SearchAsync(new("INBOX", Limit: 2), CancellationToken.None);
         Assert.Equal(allVanish ? 0 : 1, first.Messages.Count);
         Assert.True(first.Truncated);
@@ -113,7 +113,7 @@ public sealed class SearchPaginationTests
         await using var server = new ScriptedImapServer(
             Page("UNSEEN UID 1:89", [10, 30, 50], [50]),
             Page("UNSEEN UID 1:89", [10, 30, 70], [70, 30, 10]));
-        using var mailbox = new MailKitMailbox(server.Settings(), codec);
+        using var mailbox = new MailKitMailbox(server.Settings(), codec, passwordSource: new SyntheticPasswordSource());
         var first = await mailbox.SearchAsync(request with { Limit = 1, Cursor = cursor }, CancellationToken.None);
         Assert.Equal(50u, Assert.Single(first.Messages).Reference.Uid);
         var replay = await mailbox.SearchAsync(request with { Limit = 50, Cursor = cursor }, CancellationToken.None);
@@ -132,7 +132,7 @@ public sealed class SearchPaginationTests
         var operation = boundary == 1 ? new[] { Examine(), Logout() } :
             new[] { Examine(), Search("UID 1:4294967294"), Logout() };
         await using var server = new ScriptedImapServer(new Session(Login(operation)));
-        using var mailbox = new MailKitMailbox(server.Settings(), codec);
+        using var mailbox = new MailKitMailbox(server.Settings(), codec, passwordSource: new SyntheticPasswordSource());
         var result = await mailbox.SearchAsync(request with { Cursor = codec.Encode(request, 7, boundary) }, CancellationToken.None);
         Assert.Empty(result.Messages); Assert.Null(result.NextCursor);
         await server.VerifyAsync();
@@ -147,7 +147,7 @@ public sealed class SearchPaginationTests
         var request = new SearchRequest("Private");
         await using var server = new ScriptedImapServer();
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: allExcept ? FolderAccessMode.AllExcept : FolderAccessMode.Allowlist,
-            excludedFolders: ["Private"]), codec);
+            excludedFolders: ["Private"]), codec, passwordSource: new SyntheticPasswordSource());
         await Error(MailboxError.DeniedFolder, () => mailbox.SearchAsync(request with { Cursor = codec.Encode(request, 7, 42) }, CancellationToken.None));
         var allowed = new SearchRequest("INBOX");
         foreach (var bad in new[] { "", new string('a', 98), codec.Encode(allowed with { Subject = "other" }, 7, 42),
@@ -172,7 +172,7 @@ public sealed class SearchPaginationTests
         };
         await using var server = new ScriptedImapServer(new Session(Login(new Step("LIST \"\" Work", listing))),
             new Session(Login(new Step("LIST \"\" \"\\*\"", "{tag} OK list\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept, excludedFolders: ["INBOX"]), codec);
+        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept, excludedFolders: ["INBOX"]), codec, passwordSource: new SyntheticPasswordSource());
         await Error(MailboxError.FolderUnavailable, () => mailbox.SearchAsync(request with { Cursor = codec.Encode(request, 7, 90) }, CancellationToken.None));
         Assert.Empty(await mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
@@ -200,7 +200,7 @@ public sealed class SearchPaginationTests
             steps.Add(new(@"UID FETCH 50 \(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE\)", "{tag} NO rejected\r\n"));
         }
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())), new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(), codec);
+        using var mailbox = new MailKitMailbox(server.Settings(), codec, passwordSource: new SyntheticPasswordSource());
         await Error(Enum.Parse<MailboxError>(error), () => mailbox.SearchAsync(request with { Cursor = codec.Encode(request, 7, 90) }, CancellationToken.None));
         Assert.Single(await mailbox.ListFoldersAsync(CancellationToken.None));
         await server.VerifyAsync();
@@ -226,7 +226,7 @@ public sealed class SearchPaginationTests
             else { steps.Add(Fetch([50])); steps.Add(new("LOGOUT", WaitForDisconnect: true, Reached: reached)); }
         }
         await using var server = new ScriptedImapServer(new Session(Login(steps.ToArray())), new Session(Login(Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(), codec)
+        using var mailbox = new MailKitMailbox(server.Settings(), codec, passwordSource: new SyntheticPasswordSource())
             { OperationDeadline = timeout ? TimeSpan.FromMilliseconds(750) : TimeSpan.FromSeconds(30) };
         using var cancellation = new CancellationTokenSource();
         var call = mailbox.SearchAsync(request with { Cursor = codec.Encode(request, 7, 90) }, cancellation.Token);

@@ -15,8 +15,7 @@ SERVICE = 'org.freedesktop.secrets'
 ROOT = '/org/freedesktop/secrets'
 COLLECTION = ROOT + '/collection/synthetic'
 ITEM = COLLECTION + '/item1'
-ATTRS = {'application': 'protonmail-mcp', 'purpose': 'bridge-imap-password',
-         'id': '44ec5121-59ce-4c39-8b45-551823feb631'}
+ATTRS = {'application': 'ProtonMailMcp', 'account': 'BrigePassword'}
 CANARY = b'SYNTHETIC-password-sentinel'
 
 
@@ -99,39 +98,52 @@ def main():
                     if interface.endswith('.Item'):
                         attrs = dict(ATTRS, extra='synthetic')
                         if state['mode'] == 'attributes':
-                            attrs['purpose'] = 'wrong'
+                            attrs['account'] = 'wrong'
                         return {'Locked': dbus.Boolean(state['mode'] == 'locked-item' or
                                                      (state['mode'] == 'duplicate' and self.fixture_path.endswith('item2'))),
                                 'Attributes': dbus.Dictionary(attrs, signature='ss'), 'Label': 'ignored',
                                 'Created': dbus.UInt64(1), 'Modified': dbus.UInt64(1)}
                     raise RuntimeError()
 
-                @dbus.service.method('org.freedesktop.Secret.Service', in_signature='s', out_signature='o', async_callbacks=('ok', 'error'))
-                def ReadAlias(self, alias, ok, error):
-                    if alias != 'default':
-                        raise RuntimeError()
-                    state['calls'].append('ReadAlias')
-                    transition('alias')
-                    if state['mode'] == 'hang-load':
-                        GLib.timeout_add(10000, lambda: (ok(dbus.ObjectPath(COLLECTION)), False)[1])
-                    elif state['mode'] == 'stall-alias':
-                        GLib.timeout_add(1200, lambda: (ok(dbus.ObjectPath(COLLECTION)), False)[1])
-                    else:
-                        ok(dbus.ObjectPath('/' if state['mode'] == 'missing-alias' else COLLECTION))
-
-                @dbus.service.method('org.freedesktop.Secret.Collection', in_signature='a{ss}', out_signature='ao', async_callbacks=('ok', 'error'))
+                @dbus.service.method('org.freedesktop.Secret.Service', in_signature='a{ss}', out_signature='aoao', async_callbacks=('ok', 'error'))
                 def SearchItems(self, attributes, ok, error):
-                    if dict(attributes) != ATTRS:
-                        raise RuntimeError()
                     state['calls'].append('SearchItems')
+                    if state['mode'] == 'denied':
+                        raise dbus.exceptions.DBusException('SYNTHETIC-native-error', name='org.freedesktop.DBus.Error.AccessDenied')
                     transition('search')
-                    paths = [] if state['mode'] == 'missing-item' else [ITEM]
+                    paths = [] if state['mode'] == 'missing-item' or dict(attributes) != ATTRS else [ITEM]
                     if state['mode'] == 'duplicate':
                         paths.append(COLLECTION + '/item2')
-                    if state['mode'] == 'stall-search':
-                        GLib.timeout_add(1200, lambda: (ok(dbus.Array(paths, signature='o')), False)[1])
+                    def respond():
+                        locked = state['mode'] in ('locked-item', 'prompt', 'dismiss-prompt', 'stall-prompt')
+                        ok(dbus.Array([] if locked else paths, signature='o'), dbus.Array(paths if locked else [], signature='o'))
+                        return False
+                    if state['mode'] in ('stall-search', 'hang-load'):
+                        GLib.timeout_add(10000 if state['mode'] == 'hang-load' else 1200, respond)
                     else:
-                        ok(dbus.Array(paths, signature='o'))
+                        respond()
+
+                @dbus.service.method('org.freedesktop.Secret.Service', in_signature='ao', out_signature='aoo')
+                def Unlock(self, paths):
+                    state['calls'].append('Unlock')
+                    if state['mode'] in ('prompt', 'dismiss-prompt', 'stall-prompt'):
+                        return dbus.Array([], signature='o'), dbus.ObjectPath(ROOT + '/prompt/test')
+                    return dbus.Array(paths, signature='o'), dbus.ObjectPath('/')
+
+                @dbus.service.method('org.freedesktop.Secret.Prompt', in_signature='s', out_signature='')
+                def Prompt(self, window):
+                    state['calls'].append('Prompt')
+                    if state['mode'] != 'stall-prompt':
+                        GLib.timeout_add(50, lambda: (self.Completed(state['mode'] == 'dismiss-prompt', dbus.Array([] if state['mode'] == 'dismiss-prompt' else [ITEM], signature='o', variant_level=1)), False)[1])
+
+                @dbus.service.method('org.freedesktop.Secret.Prompt', in_signature='', out_signature='')
+                def Dismiss(self):
+                    state['calls'].append('Dismiss')
+                    self.Completed(True, dbus.Array([], signature='o', variant_level=1))
+
+                @dbus.service.signal('org.freedesktop.Secret.Prompt', signature='bv')
+                def Completed(self, dismissed, result):
+                    pass
 
                 @dbus.service.method('org.freedesktop.Secret.Service', in_signature='sv', out_signature='vo')
                 def OpenSession(self, algorithm, parameters):
@@ -143,8 +155,8 @@ def main():
                     path = ROOT + '/session/synthetic'
                     return dbus.String('', variant_level=1), dbus.ObjectPath(path)
 
-                @dbus.service.method('org.freedesktop.Secret.Item', in_signature='o', out_signature='(oayays)', async_callbacks=('ok', 'error'), message_keyword='message')
-                def GetSecret(self, session, ok, error, message=None):
+                @dbus.service.method('org.freedesktop.Secret.Service', in_signature='aoo', out_signature='a{o(oayays)}', async_callbacks=('ok', 'error'), message_keyword='message')
+                def GetSecrets(self, paths, session, ok, error, message=None):
                     state['calls'].append('GetSecret')
                     state['loads'] += 1
                     transition('load')
@@ -161,7 +173,7 @@ def main():
                         return
                     def respond():
                         secret = dbus.Struct((session, dbus.ByteArray(b''), dbus.ByteArray(state['value']), state['content_type']), signature='oayays')
-                        ok(secret)
+                        ok(dbus.Dictionary({paths[0]: secret}, signature='o(oayays)'))
                         # Signals queued after the successful reply but before final bus barrier.
                         transition('completion')
                         return False
@@ -176,8 +188,9 @@ def main():
             observer = dbus.bus.BusConnection(env['DBUS_SESSION_BUS_ADDRESS'])
             observer.add_match_string("type='method_call',eavesdrop='true'")
             fixture_senders = {first.get_unique_name(), second.get_unique_name(), observer.get_unique_name()}
+            recording = False
             def observe(connection, message):
-                if message.get_sender() in fixture_senders:
+                if not recording or message.get_sender() in fixture_senders:
                     return
                 interface = message.get_interface() or ''
                 member = message.get_member() or ''
@@ -187,9 +200,9 @@ def main():
                     state['calls'].append(member)
                     if member == 'OpenSession':
                         state['algorithm'] = str(message.get_args_list()[0])
-                    if member == 'GetSecret':
+                    if member == 'GetSecrets':
                         state['loads'] += 1
-                if member in ('Unlock', 'Prompt', 'CreateItem', 'Delete', 'SetAlias', 'Set', 'SetSecret'):
+                if member in ('CreateItem', 'Delete', 'SetAlias', 'Set', 'SetSecret'):
                     state['calls'].append('FORBIDDEN:' + member)
             observer.add_message_filter(observe)
             daemon = None
@@ -197,7 +210,7 @@ def main():
             if backend == 'fake':
                 first.request_name(SERVICE, 4)
                 for conn in (first, second):
-                    for path in (ROOT, COLLECTION, ITEM, COLLECTION + '/item2'):
+                    for path in (ROOT, COLLECTION, ITEM, COLLECTION + '/item2', ROOT + '/prompt/test'):
                         objects.append(Fake(conn, path))
             else:
                 control = root / 'control'
@@ -232,18 +245,23 @@ def main():
                     if prompt != '/':
                         raise RuntimeError()
                     gitems.append(str(item))
-                # Exercise the documented GI provisioning recipe only on this owned bus.
-                text = (Path(__file__).parent / 'KEYRING.md').read_text()
-                code = text.split('<!-- provisioning-example:start -->', 1)[1].split('<!-- provisioning-example:end -->', 1)[0]
-                code = code.split('```python', 1)[1].split('```', 1)[0]
-                from gi.repository import Gio
-                recipe_bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-                fixture_senders.add(recipe_bus.get_unique_name())
-                namespace = {'__name__': 'synthetic_recipe'}
-                exec(compile(code, 'documented_provisioning_example', 'exec'), namespace)
-                provisioned = namespace['provision'](ATTRS['id'], CANARY.decode())
-                gitems.append(provisioned.get_object_path())
-                del provisioned, namespace
+                # Execute the documented command only on the private fixture bus/storage.
+                provision = subprocess.run(['/usr/bin/secret-tool', 'store', '--label=Proton Mail MCP',
+                                            'application', ATTRS['application'], 'account', ATTRS['account']],
+                                           input=CANARY, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=5)
+                if provision.returncode != 0 or provision.stdout or provision.stderr:
+                    raise RuntimeError()
+                matches, locked = gservice.SearchItems(dbus.Dictionary(ATTRS, signature='ss'))
+                if len(matches) != 1 or locked:
+                    raise RuntimeError()
+                gitems.append(str(matches[0]))
+                # Pump queued provisioning observations before recording application traffic.
+                while GLib.MainContext.default().pending():
+                    GLib.MainContext.default().iteration(False)
+                state['calls'] = []
+                state['clients'] = set()
+
+            recording = True
 
             def command(fd, condition):
                 nonlocal daemon

@@ -128,7 +128,7 @@ public sealed class DownloadStorageTests
         var path = config.EnableDownloads();
         using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var entry = Path.Combine(path, "foreign");
-        if (kind == "symlink") File.CreateSymbolicLink(entry, config.PasswordPath);
+        if (kind == "symlink") File.CreateSymbolicLink(entry, config.FixturePath);
         else if (kind == "directory") Directory.CreateDirectory(entry);
         else
         {
@@ -274,7 +274,7 @@ public sealed class DownloadStorageTests
         var path = config.EnableDownloads();
         using var store = await new PrivateDownloadStore(path).AcquireAsync(default);
         var info = new System.Diagnostics.ProcessStartInfo("ln") { UseShellExecute = false };
-        info.ArgumentList.Add(config.PasswordPath);
+        info.ArgumentList.Add(config.FixturePath);
         info.ArgumentList.Add(Path.Combine(path, "linked"));
         using var process = System.Diagnostics.Process.Start(info)!;
         process.WaitForExit();

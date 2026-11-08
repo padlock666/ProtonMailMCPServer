@@ -27,7 +27,7 @@ public sealed class FolderAccessProtocolTests
             new Session(Login(ListAll(first), Logout())),
             new Session(Login(ListAll(first + "* LIST () \"/\" Labels/New\r\n"), Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept,
-            excludedFolders: exclusions ? ["inbox", "Labels/Private"] : []));
+            excludedFolders: exclusions ? ["inbox", "Labels/Private"] : []), passwordSource: new SyntheticPasswordSource());
         var expected = exclusions ? new[] { "Labels/Work", "Labels/Private/Child", "Labels/Café" } :
             ["INBOX", "Labels/Work", "Labels/Private", "Labels/Private/Child", "Labels/Café"];
         Assert.Equal(expected, (await mailbox.ListFoldersAsync(CancellationToken.None)).Select(f => f.Name));
@@ -41,7 +41,7 @@ public sealed class FolderAccessProtocolTests
         var entries = string.Concat(Enumerable.Range(1, 4096).Select(i => $"* LIST () \"/\" Label{i}\r\n"));
         await using var server = new ScriptedImapServer(new Session(Login(ListAll(entries))),
             new Session(Login(ListAll(""), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept));
+        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept), passwordSource: new SyntheticPasswordSource());
         // INBOX plus 4096 distinct labels exceeds the documented 4096-folder output limit.
         await Error(MailboxError.ProtocolFailure, () => mailbox.ListFoldersAsync(CancellationToken.None));
         Assert.Equal("INBOX", Assert.Single(await mailbox.ListFoldersAsync(CancellationToken.None)).Name);
@@ -55,7 +55,7 @@ public sealed class FolderAccessProtocolTests
             string.Concat(Enumerable.Range(1, 4095).Select(i => $"* LIST () \"/\" Label{i}\r\n"));
         await using var server = new ScriptedImapServer(new Session(Login(ListAll(entries), Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept,
-            excludedFolders: ["Private"]));
+            excludedFolders: ["Private"]), passwordSource: new SyntheticPasswordSource());
         Assert.Equal(4096, (await mailbox.ListFoldersAsync(CancellationToken.None)).Count);
         await server.VerifyAsync();
     }
@@ -72,7 +72,7 @@ public sealed class FolderAccessProtocolTests
             new("LIST \"\" \"Other/\\*\"", "* LIST () \"/\" Other/Peer\r\n{tag} OK list\r\n"),
             Logout()
         ]));
-        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept));
+        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept), passwordSource: new SyntheticPasswordSource());
         Assert.Equal(new[] { "INBOX", "Work", "Shared/Team", "Other/Peer" },
             (await mailbox.ListFoldersAsync(CancellationToken.None)).Select(f => f.Name));
         await server.VerifyAsync();
@@ -83,7 +83,7 @@ public sealed class FolderAccessProtocolTests
     {
         await using var server = new ScriptedImapServer();
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept,
-            excludedFolders: ["inbox", "Labels/Private"]));
+            excludedFolders: ["inbox", "Labels/Private"]), passwordSource: new SyntheticPasswordSource());
         foreach (var folder in new[] { "INBOX", "Inbox", "Labels/Private" })
         {
             await Error(MailboxError.DeniedFolder, () => mailbox.SearchAsync(new(folder), CancellationToken.None));
@@ -109,7 +109,7 @@ public sealed class FolderAccessProtocolTests
                     "BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1 NIL NIL NIL NIL))\r\n{tag} OK fetched\r\n"),
                 new(@"UID FETCH 42 \(BODY\.PEEK\[TEXT\]\)", "* 1 FETCH (UID 42 BODY[TEXT] {5}\r\nhello)\r\n{tag} OK body\r\n"), Logout())));
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept,
-            excludedFolders: ["Labels"]));
+            excludedFolders: ["Labels"]), passwordSource: new SyntheticPasswordSource());
         Assert.Empty((await mailbox.SearchAsync(new(label), CancellationToken.None)).Messages);
         var result = await mailbox.GetMessageAsync(new(label, 7, 42), CancellationToken.None);
         Assert.Equal("hello", result.Text);
@@ -126,7 +126,7 @@ public sealed class FolderAccessProtocolTests
         await using var server = new ScriptedImapServer(new Session(Login(
             new Step("LIST \"\" Alias", "* LIST () \"/\" INBOX\r\n{tag} OK list\r\n"))));
         using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept,
-            excludedFolders: ["INBOX"]));
+            excludedFolders: ["INBOX"]), passwordSource: new SyntheticPasswordSource());
         await Error(MailboxError.FolderUnavailable, () => read ?
             mailbox.GetMessageAsync(new("Alias", 7, 42), CancellationToken.None) :
             (Task)mailbox.SearchAsync(new("Alias"), CancellationToken.None));
@@ -148,7 +148,7 @@ public sealed class FolderAccessProtocolTests
         };
         await using var server = new ScriptedImapServer(new Session(Login(failing)),
             new Session(Login(ListAll("* LIST (\\Noselect) \"/\" Labels\r\n* LIST () \"/\" Labels/Recovered\r\n"), Logout())));
-        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept));
+        using var mailbox = new MailKitMailbox(server.Settings(folderAccessMode: FolderAccessMode.AllExcept), passwordSource: new SyntheticPasswordSource());
         using var cancellation = new CancellationTokenSource();
         var call = mailbox.ListFoldersAsync(cancellation.Token);
         if (failure == "cancelled")

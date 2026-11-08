@@ -23,7 +23,7 @@ If no compatible SDK is found, compare `dotnet --list-sdks` with `global.json`: 
 
 ## Configure the host
 
-Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, public certificate, explicit folder access policy and either a private password file or a [GNOME Keyring credential](LINUX-SETUP.md#gnome-keyring-setup). Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on the JSON, certificate and any selected password file.
+Follow the [Linux/Bridge setup guide](LINUX-SETUP.md) and [configuration guide](CONFIGURATION.md) to prepare an external JSON file, public certificate, explicit folder access policy and a [GNOME Keyring credential](LINUX-SETUP.md#gnome-keyring-setup). Examples use placeholders; keep actual settings outside the repository. Linux `statx` support is required for opened-handle ownership and permission checks on the JSON and certificate.
 
 A successful startup validates local configuration only. The adapter is registered lazily, and initialization makes no mailbox connection or authentication attempt. Startup success therefore does not prove that Bridge is available or that its live peer certificate and credentials match.
 
@@ -172,16 +172,16 @@ if (search.IsError != true && search.StructuredContent is { } data &&
 | --- | --- |
 | `0` | Normal shutdown; not evidence of live mailbox connectivity |
 | `2`, `startup: configuration_usage_requires_config_path` | Supply exactly `--config` and one absolute configuration path |
-| `2`, `configuration_absolute_path_required` | Check the configuration, password, and certificate paths |
+| `2`, `configuration_absolute_path_required` | Check the configuration and certificate paths |
 | `2`, `configuration_host_invalid`, `configuration_port_invalid`, or `configuration_tls_mode_invalid` | Check the literal loopback address, port range, and exact TLS mode value |
 | `2`, `configuration_username_invalid` or `configuration_allowlist_invalid` | Check the required username and legacy nonempty exact folder list |
+| `2`, `configuration_keyring_invalid` | Check required application/account selectors and their UTF-8 size/control-character limits |
 | `2`, `configuration_folder_access_invalid` | Check the explicit mode, required corresponding list, and absence of conflicting fields or legacy settings; see [folder policies](CONFIGURATION.md#folder-access-policy) |
-| `2`, `configuration_password_*`, `configuration_settings_*`, or `configuration_certificate_*` file/directory errors | Check existence, ownership, private modes, regular-file type, and symlinks for all three local files |
-| `2`, `configuration_password_invalid` | Check UTF-8 password content and line endings without printing the secret |
+| `2`, `configuration_settings_*` or `configuration_certificate_*` file/directory errors | Check existence, ownership, private modes, regular-file type, and symlinks for both local files |
 | `2`, `configuration_public_certificate_required` or `configuration_certificate_invalid` | Check that the file contains a single public certificate and that its validity dates include the current time |
 | `2`, `configuration_file_too_large` | Check the file limits in the configuration guide |
 | `2`, `configuration_linux_required`, `configuration_metadata_unavailable`, or `configuration_path_unsafe` | Use Linux with working opened-handle checks; remove unsafe ancestor permissions, symlinks, and `.`/`..` path components |
-| `2`, `configuration_invalid` or `configuration_invalid_or_unavailable` | Check JSON spelling/types, readability, certificate format, and password encoding locally |
+| `2`, `configuration_invalid` or `configuration_invalid_or_unavailable` | Check JSON spelling/types, readability, certificate format, and keyring selector fields locally |
 | `1`, `host: failed` | The host failed; review the build/runtime setup and reproduce with synthetic fixtures |
 
 All configuration diagnostics carry the `startup: ` prefix, including rows that abbreviate it. Failures intentionally omit raw exceptions and sensitive values. Share only sanitized codes when reporting problems. Restart after fixing external settings; the server does not reload them automatically.
@@ -210,14 +210,14 @@ In VS Code, use **MCP: Add Server** and choose a stdio command. Prefer user-prof
 }
 ```
 
-Review the client's trust prompt and model/data policy before enabling tools. Use **MCP: List Servers** to start/stop/restart the process and inspect sanitized stderr. Discovery should show three base tools, plus `download_attachment` only when configured. Restart after changing configuration, credentials, or pins. A client tool call can access real mail; do not test it with personal settings before authorization. Never use `dotnet run` as the MCP transport command or merge stderr into stdout.
+Review the client's trust prompt and model/data policy before enabling tools. Use **MCP: List Servers** to start/stop/restart the process and inspect sanitized stderr. Discovery should show three base tools, plus `download_attachment` only when configured. Restart after changing configuration or pins; keyring password rotation takes effect on the next operation. A client tool call can access real mail; do not test it with personal settings before authorization. Never use `dotnet run` as the MCP transport command or merge stderr into stdout.
 
 ## Runtime troubleshooting
 
 | Symptom | Safe operator action |
 | --- | --- |
 | `bridge_unavailable` | Start/unlock Bridge locally, wait for sync, check the displayed IMAP loopback endpoint and port, then retry deliberately. Initialization can succeed while Bridge is down. No automatic retries occur. |
-| `authentication_failed` | Check Bridge's generated IMAP username/password locally. File mode requires restart after password/configuration changes; keyring mode observes the dedicated item on the next operation. Do not use the Proton account password or inspect Bridge-owned entries/caches. |
+| `authentication_failed` | Check Bridge's generated IMAP username/password locally. The dedicated keyring item is retrieved on the next operation; configuration changes require restart. Do not use the Proton account password or inspect Bridge-owned entries/caches. |
 | `tls_failed` | Check required mode, local clock, public certificate validity and intended Bridge instance. Follow [certificate replacement](LINUX-SETUP.md#export-and-replace-the-certificate); do not accept a network-learned pin or disable verification. |
 | `denied_folder` or absent discovery entry | Check the configured mode and exact full-name allowlist/exclusions; missing/nonselectable entries are omitted. Parent rules do not apply to children. The server never creates or subscribes folders. |
 | `stale_reference` | Search again and use the new folder + UIDVALIDITY + UID. During acceptance stop and investigate a changed epoch before preparing a new external manifest. |
@@ -232,15 +232,14 @@ Report only fixed codes, versions, and pass/fail outcomes. Do not enable product
 
 ## Keyring behavior
 
-An explicitly configured [PasswordKeyring](CONFIGURATION.md#keyring-alternative) source retrieves the dedicated item only after TLS pin verification, once per mailbox operation. Initialization/discovery performs no lookup. Ownership changes during lookup cancel native work, discard affected results and return `credential_unavailable` before authentication without retry. A later deliberate call can start fresh; changes after accepted credential handoff do not revoke that operation. The [exact ordering and lifetime](KEYRING.md#implemented-context-and-acceptance-ordering) define this boundary.
+The required [Keyring settings](CONFIGURATION.md#gnome-keyring) select a dedicated item by application/account attributes. Lookup runs after TLS pin verification, once per mailbox operation; initialization/discovery performs no lookup. Libsecret searches collections and can show a desktop unlock prompt. Keep selectors unique across collections. Observed ownership changes during lookup cancel native work and reject affected results before authentication. Changes after accepted handoff do not revoke the current operation. See the [lifetime contract](KEYRING.md#lifetime-and-validation).
 
 | Code | Operator action |
 | --- | --- |
-| `credential_unavailable` | Check system native dependencies and the intended local desktop session/service. An owner change also causes this failure; retry only as a new caller operation after the service is stable. |
-| `credential_locked` | Unlock the intended collection through a trusted desktop tool. The server never prompts or unlocks. |
-| `credential_not_found` | Check the explicit default alias and dedicated item's three attributes locally. No discovery or cross-collection fallback occurs. |
-| `credential_ambiguous` | Resolve duplicate matching items deliberately through a trusted keyring tool, including locked matches. |
-| `credential_invalid` | Repair the dedicated secret's UTF-8 text/length/control-character or malformed-response problem locally. Do not paste values into diagnostics. |
-| `timeout` | Lookup shares the existing operation deadline; native bus/service request timeouts can expire earlier. No retry occurs. |
+| `credential_unavailable` | Check native dependencies, the intended desktop session and Secret Service. Retry deliberately after service recovery. |
+| `credential_locked` | Unlock the intended collection through Passwords and Keys or approve the desktop prompt. |
+| `credential_not_found` | Check the exact application/account attributes and desktop user/session. A dismissed prompt can also cause this result. |
+| `credential_invalid` | Check secret UTF-8, length and control-character constraints locally; do not paste its value into diagnostics. |
+| `timeout` | Lookup and any prompt share the operation's 30-second deadline. Check the desktop for a pending dialog and retry deliberately. |
 
-For keyring-backed authentication failure, verify/rotate only the dedicated item. Its new value is used on the next operation; username/configuration/pin changes still require restart. File mode retains its startup snapshot. [Provisioning and migration](KEYRING.md#gnome-keyring-provisioning-and-migration) require deliberate operator actions; live verification remains separately authorized.
+Rotate only the dedicated MCP item with the documented [secret-tool command](LINUX-SETUP.md#gnome-keyring-setup). Its new value is retrieved on the next operation. Selector/username/configuration/pin changes require restart. Full live verification remains separately authorized.

@@ -13,8 +13,8 @@ Prepare Bridge and local files using this guide, then follow [USAGE.md](USAGE.md
 
 1. Install the pinned .NET SDK from `global.json` and verify `dotnet --info`. Install Bridge using Proton's current [Linux installation instructions](https://proton.me/support/bridge-for-linux), including the credential-store prerequisites for your desktop. Record your distribution/release and Bridge version locally. Version requirements can change; installation support is distinct from this project's tested compatibility.
 2. Start Bridge yourself, sign in through its own UI, and wait for synchronization. Read the displayed IMAP username, generated password, port, and connection mode. Use a literal loopback address. Do not supply the Proton account password or any SMTP settings.
-3. Create a private directory outside the checkout, for example `$HOME/.config/protonmail-mcp`, with mode `0700`. Choose either [file mode](../examples/config.example.json) or [GNOME Keyring mode](#gnome-keyring-setup), copy the appropriate example there and edit the external copy. Set the JSON, exported public certificate, and any selected password file to mode `0600` or `0400` and keep them owned by your user. File mode uses a trusted local editor for its password file; keyring mode uses the hidden-input provisioning recipe below. Keep secrets out of command arguments and shell history. Follow all [configuration requirements](CONFIGURATION.md).
-4. Export and verify the public certificate as described below. Set an absolute path for the public certificate and, in file mode, the password file in the external JSON. Set `StartTls` for Bridge STARTTLS or `SslOnConnect` for Bridge SSL; use the displayed port rather than assuming its default. Proton documents connection modes in its [settings guide](https://proton.me/support/comprehensive-guide-to-bridge-settings).
+3. Create a private directory outside the checkout, for example `$HOME/.config/protonmail-mcp`, with mode `0700`. Copy [config.example.json](../examples/config.example.json) there and edit the external copy. Set the JSON and exported public certificate to mode `0600` or `0400`, owned by your user. Store the credential using [GNOME Keyring setup](#gnome-keyring-setup). Follow all [configuration requirements](CONFIGURATION.md).
+4. Export and verify the public certificate as described below. Set an absolute path for the public certificate in the external JSON. Set `StartTls` for Bridge STARTTLS or `SslOnConnect` for Bridge SSL; use the displayed port rather than assuming its default. Proton documents connection modes in its [settings guide](https://proton.me/support/comprehensive-guide-to-bridge-settings).
 5. Start ordinary use with a narrow allowlist such as `INBOX`, or explicitly choose `AllExcept` for broad folder/label access as described in [configuration](CONFIGURATION.md#folder-access-policy). For acceptance, use a separate configuration whose sole allowed folder is the dedicated operator-prepared test folder; never use INBOX as the acceptance folder. Configure its exact Bridge full name. No automatic descendants are allowed.
 6. Build and run the [synthetic checks](DEVELOPMENT.md#build-and-test-workflow). Configure a trusted stdio client using [USAGE.md](USAGE.md#launch-over-stdio). Decide locally whether that client may send decrypted mail to a hosted model. Initialization/discovery alone do not access mail; tool calls do.
 
@@ -40,79 +40,63 @@ Follow the [exact fixture schema and stages](TESTING.md#opt-in-real-bridge-accep
 
 ## GNOME Keyring setup
 
-This option stores the Bridge-generated IMAP password in a dedicated GNOME Keyring item. The external JSON holds its selector UUID; the server retrieves the password after pinned TLS on each mailbox operation. Use the same Linux user and desktop session for provisioning and for the MCP client that launches the server. Run provisioning and the server as your normal user.
+The credential is Bridge's generated **IMAP password**. Use the same normal Linux user and desktop session for provisioning and the MCP client. Use `sudo` only to install packages.
 
 ### 1. Install the prerequisites
 
-The runtime needs GNOME Keyring and libsecret/GLib/GIO/GObject. The provisioning recipe also needs Python 3, PyGObject and the Secret 1 typelib; Passwords and Keys (`seahorse`) provides the collection-management UI. On Ubuntu 24.04 and its derivatives, the operator can install these packages with:
+On Debian/Ubuntu and derivatives:
 
 ```bash
-sudo apt install gnome-keyring libsecret-1-0 python3-gi gir1.2-secret-1 seahorse
+sudo apt update
+sudo apt install gnome-keyring libpam-gnome-keyring libsecret-1-0 libsecret-tools seahorse
 ```
 
-These are distribution packages, including [the Secret typelib](https://packages.ubuntu.com/noble/gir1.2-secret-1) and [Seahorse](https://packages.ubuntu.com/noble/seahorse). On other distributions, use their package equivalents. Installation is an operator action; the server does not install packages, launch a keyring daemon or unlock collections. [Tested versions and trust limits](KEYRING.md#native-dependencies-and-apis) describe the isolated compatibility evidence. Python is used only for provisioning, not by the running server.
-
-### 2. Prepare the default collection
-
-Open **Passwords and Keys** from the desktop application menu, or run `seahorse` in a desktop terminal. Under **Passwords**, use the intended default keyring, usually **Login**. Unlock it through its context menu or lock icon and enter that collection's password. GNOME documents [unlocking a keyring](https://help.gnome.org/seahorse/keyring-unlock.html) and [choosing the default keyring](https://help.gnome.org/seahorse/keyring-change-default.html).
-
-If you need a new collection, use **+ → Password Keyring**, give it a name and a nonempty collection password, then deliberately choose **Set as default** and unlock it. See GNOME's [creation instructions](https://help.gnome.org/seahorse/keyring-create.html). Changing the default also changes where other applications may store future passwords. An existing suitable default needs no change.
-
-`CollectionAlias` in this server's configuration must remain `default`, even when the collection is displayed as **Login** or another name. The alias points to the selected collection. The server fails with `credential_locked` while it is locked; unlock it through the desktop before using mailbox tools. Automatic unlock for headless, SSH or system-service deployments is outside this feature.
-
-### 3. Store the dedicated MCP password
-
-Read the generated **IMAP password** from Bridge's own settings. Keep the Bridge IMAP username for the JSON configuration. The Proton account password and the collection-unlock password serve different purposes and must not be entered as the IMAP secret. Leave Bridge-owned keyring entries alone.
-
-Create a private directory outside the checkout if you do not already have one:
+`libsecret-tools` supplies `secret-tool`. The server calls libsecret directly; it does not launch a credential command. Log out and log back in after installing desktop integration. In a desktop terminal, check the service without retrieving a secret:
 
 ```bash
-mkdir -p "$HOME/.config/protonmail-mcp"
-chmod 700 "$HOME/.config/protonmail-mcp"
+busctl --user status org.freedesktop.secrets
 ```
 
-Save the Python code from [the provisioning recipe](KEYRING.md#gnome-keyring-provisioning-and-migration) as `provision-keyring.py` in that directory using a trusted editor. The script contains code only; enter the password at its hidden terminal prompt. Run it from an interactive terminal:
+The owner should be `gnome-keyring-daemon`. Open **Passwords and Keys** (`seahorse`) if service activation is needed. Do not start a competing provider on your desktop bus. Other providers can answer the same API; this check is an operator responsibility.
+
+### 2. Prepare a password-protected keyring
+
+Open **Passwords and Keys**, find **Login** under Passwords, and unlock it. If needed, create a password keyring with a strong, nonempty password and choose **Set as default**. `secret-tool store` writes to that default collection. GNOME documents [creating a keyring](https://help.gnome.org/seahorse/keyring-create.html) and [changing the default](https://help.gnome.org/seahorse/keyring-change-default.html).
+
+For ordinary automatic unlock, the Login keyring password must match your login password and GNOME Keyring PAM integration must be enabled. Automatic or fingerprint login may leave it locked. Unlock it through the desktop; never set an empty keyring password to suppress prompts. Headless, SSH, container and system-service sessions usually lack the required desktop bus or unlock UI.
+
+### 3. Add the Bridge credential with secret-tool
+
+Run this exact command in your desktop terminal:
 
 ```bash
-chmod 600 "$HOME/.config/protonmail-mcp/provision-keyring.py"
-/usr/bin/python3 "$HOME/.config/protonmail-mcp/provision-keyring.py"
+secret-tool store --label='Proton Mail MCP' \
+  application ProtonMailMcp account BrigePassword
 ```
 
-At `Bridge IMAP password:`, enter the Bridge-generated IMAP password. Do not place it in a shell command, environment variable, JSON file or script. On success the script prints a UUID. Keep that UUID for the next step; it is a nonsecret selector, not the password.
+At the hidden **Password:** prompt, enter the **Bridge-generated IMAP password**, then press Enter. A graphical keyring unlock prompt may also appear. Use neither the Proton account password nor the keyring-unlock password. Do not put the IMAP password in command arguments, pipes, environment variables, scripts, or shell history.
 
-The script creates one item in the unlocked default collection with all required attributes:
+The label is for humans. The application selects by the exact `application` and `account` attributes. Keep this pair unique across collections: libsecret can choose one of several matches. Provision a dedicated MCP item and leave Bridge's internal entries alone. Creating an item only by label in Seahorse may not set the required attributes.
 
-| Attribute | Value |
-| --- | --- |
-| `application` | `protonmail-mcp` |
-| `purpose` | `bridge-imap-password` |
-| `id` | The UUID printed by the script |
+### 4. Configure the selectors
 
-Its display label is **Proton Mail MCP credential**. Selection depends on the attributes, so use the recipe to populate them. The server requires exactly one item matching the full selector, including locked matches, and never chooses an item by label or username.
-
-### 4. Select the item in the external configuration
-
-For a new setup, use [config.keyring.example.json](../examples/config.keyring.example.json) as the complete configuration template and save your edited copy outside the checkout. For an existing setup, edit your current external JSON to preserve its endpoint, public certificate, folder policy and optional download settings. Remove `PasswordFile` entirely, including any null value, and add:
+In your private external copy of [config.example.json](../examples/config.example.json), set:
 
 ```json
 {
-  "PasswordKeyring": {
-    "CollectionAlias": "default",
-    "ItemId": "44ec5121-59ce-4c39-8b45-551823feb631"
+  "Keyring": {
+    "Application": "ProtonMailMcp",
+    "Account": "BrigePassword"
   }
 }
 ```
 
-This is a fragment. Replace the synthetic `ItemId` with the UUID your script printed. Keep the exact case and field names. Configure Bridge's IMAP username, port and TLS mode, plus the absolute path to its independently exported public certificate, as described in [configuration](CONFIGURATION.md). No password file is needed in keyring mode.
+This is a fragment. Also set the Bridge IMAP username, loopback endpoint, port, TLS mode, independently exported public certificate and folder policy. The selectors above must match the store command exactly. To choose different identifiers, change both the command's attribute values and the JSON. Selectors are not secrets or access controls.
 
-Keep the external configuration and public certificate owned by your user, with mode `0600` or `0400`, in a private parent directory such as the one above. All existing [protected-file requirements](CONFIGURATION.md#protected-local-files) still apply. Exactly one password source is permitted; there is no file fallback.
+### 5. Restart and use the server
 
-### 5. Restart and check the setup
+Restart the launching MCP client after settings changes. Keep `--config /absolute/path/to/config.json` as the launch arguments. The client must run in the intended desktop session so its child inherits the local Unix session bus. Leave `SECRET_SERVICE_BUS_NAME`, `G_DBUS_DEBUG` and `G_MESSAGES_DEBUG` unset.
 
-Restart the MCP server through its launching client after changing the JSON. Keep the existing `--config /absolute/path/to/config.json` launch arguments; keyring mode adds no launch argument. Launch the client in the prepared desktop session so the child server inherits its local Unix session-bus context. Leave `SECRET_SERVICE_BUS_NAME`, `G_DBUS_DEBUG` and `G_MESSAGES_DEBUG` unset, and keep personal bus addresses out of tracked launch files.
+Tool discovery performs no keyring lookup or Bridge connection. A mailbox call verifies Bridge TLS, then retrieves the password; approve any GNOME unlock dialog on the desktop within the operation's 30-second deadline. Dismissing a dialog can leave no retrievable secret. For missing credentials, check the exact attributes and desktop user/session. For `credential_unavailable`, check native libraries and the session bus. See [runtime guidance](USAGE.md#keyring-behavior).
 
-Refresh tool discovery to confirm startup and the expected three or four tools. Discovery does not query the keyring or authenticate to Bridge. When you deliberately invoke a mailbox tool such as `list_folders`, the server first verifies Bridge TLS and then looks up the selected item. Full live regression still requires the separate [operator-prepared acceptance procedure](TESTING.md#opt-in-real-bridge-acceptance).
-
-For `credential_locked`, unlock the default collection in Passwords and Keys. For `credential_not_found`, check the default collection and the UUID in your external JSON. For `credential_ambiguous`, resolve duplicate matching MCP items through a trusted keyring tool. For `credential_unavailable`, check installed runtime libraries and the launching client's desktop-session context. The [runtime error guide](USAGE.md#keyring-behavior) covers other fixed failures without requiring secret values in diagnostics.
-
-To rotate the password, update only your dedicated MCP item's secret through a trusted keyring tool, preserving its attributes. The next mailbox operation retrieves the new value without restarting. If you provision a new item instead, use its new UUID in the external JSON and restart. After separately verifying migration, you may retire an old password file and its backups under your own retention policy; the server never removes them.
+To rotate the credential, repeat the same `secret-tool store` command and enter the new Bridge IMAP password at its hidden prompt. It updates a matching item in the default collection. The next mailbox operation retrieves the new value. Inspect duplicate items deliberately through Passwords and Keys if necessary. Full live acceptance remains a separate [authorized procedure](TESTING.md#opt-in-real-bridge-acceptance).

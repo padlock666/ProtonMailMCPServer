@@ -150,6 +150,7 @@ public sealed class HostTests
             new StdioClientTransport(new StdioClientTransportOptions
             {
                 Command = "dotnet", Arguments = [ApplicationPath, "--config", fixture.ConfigPath],
+                EnvironmentVariables = await fixture.KeyringEnvironmentAsync(),
                 Name = "SyntheticConcurrentHost", StandardErrorLines = stderr.Enqueue
             }), cancellationToken: token);
 
@@ -180,7 +181,7 @@ public sealed class HostTests
     {
         using var fixture = new SyntheticConfiguration();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var process = Start(["--config", fixture.ConfigPath]);
+        using var process = Start(["--config", fixture.ConfigPath], await fixture.KeyringEnvironmentAsync());
         try
         {
             var errors = process.StandardError.ReadToEndAsync(timeout.Token);
@@ -235,7 +236,7 @@ public sealed class HostTests
         var downloadPath = download ? fixture.EnableDownloads() : null;
         fixture.Save();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
-        using var process = Start(["--config", fixture.ConfigPath]);
+        using var process = Start(["--config", fixture.ConfigPath], await fixture.KeyringEnvironmentAsync());
         try
         {
             var errors = process.StandardError.ReadToEndAsync(timeout.Token);
@@ -332,7 +333,7 @@ public sealed class HostTests
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    private static Process Start(string[] arguments)
+    private static Process Start(string[] arguments, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var info = new ProcessStartInfo("dotnet")
         {
@@ -341,6 +342,11 @@ public sealed class HostTests
         };
         info.ArgumentList.Add(ApplicationPath);
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
+        if (environment is not null)
+        {
+            info.Environment.Clear();
+            foreach (var pair in environment) info.Environment[pair.Key] = pair.Value;
+        }
         // Even hostile log-level overrides must not enable SDK payload diagnostics.
         info.Environment["Logging__LogLevel__Default"] = "Trace";
         return Process.Start(info) ?? throw new InvalidOperationException("Synthetic process failed to start.");

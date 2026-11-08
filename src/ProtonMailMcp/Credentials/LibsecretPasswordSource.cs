@@ -75,6 +75,7 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
         private readonly List<Ready> callbacks = [];
         private Signal? ownerCallback;
         private Destroy? subscriptionDestroyed;
+        private Source? cancelCallback;
 
         private void Check()
         {
@@ -166,13 +167,17 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
         {
             context = g_main_context_new();
             g_main_context_push_thread_default(context);
-            nint service = 0, collection = 0, matches = 0, attributes = 0, value = 0;
+            nint service = 0, attributes = 0, value = 0;
             uint subscription = 0;
             PasswordLease? lease = null;
             try
             {
                 cancellable = g_cancellable_new();
-                using var registration = token.Register(() => g_cancellable_cancel(cancellable));
+                // libsecret's prompt cancellation starts another async D-Bus call. Dispatch
+                // cancellation on this context so that call's completion is pumped here too.
+                cancelCallback = _ => { g_cancellable_cancel(cancellable); return 0; };
+                using var registration = token.Register(() =>
+                    g_main_context_invoke_full(context, 0, cancelCallback, 0, 0));
                 try
                 {
                     connection = Await(cb => g_bus_get(2, cancellable, cb, 0),
@@ -198,52 +203,20 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
                     subscription = g_dbus_connection_signal_subscribe(connection, "org.freedesktop.DBus",
                         "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus",
                         "org.freedesktop.secrets", 0, ownerCallback, 0, subscriptionDestroyed);
-                    // Subscription is installed before constructing/resolving the service. The
-                    // first acquisition is permitted; any loss/change, including during init, fails.
+                    // Use the demo's application/account lookup semantics with a fresh owned
+                    // service. This avoids libsecret's default backend cache retaining a cancelled
+                    // desktop prompt and its connection across mailbox operations.
                     service = Await(cb => secret_service_open(secret_service_get_type(), null, 0, cancellable, cb, 0),
                         r => { var v = secret_service_open_finish(r, out var e); return (v, e); }, g_object_unref);
                     if (service == 0 || g_dbus_proxy_get_connection(service) != connection)
                         throw new MailboxException(MailboxError.CredentialUnavailable);
                     Barrier();
-                    collection = Await(cb => secret_collection_for_alias(service, selector.CollectionAlias, 0, cancellable, cb, 0),
-                        r => { var v = secret_collection_for_alias_finish(r, out var e); return (v, e); }, g_object_unref);
-                    if (collection == 0) throw new MailboxException(MailboxError.CredentialNotFound);
-                    if (secret_collection_get_locked(collection) != 0) throw new MailboxException(MailboxError.CredentialLocked);
-                    attributes = NewAttributes(selector.ItemId);
-                    matches = Await(cb => secret_collection_search(collection, 0, attributes, 2, cancellable, cb, 0),
-                        r => { var v = secret_collection_search_finish(collection, r, out var e); return (v, e); }, FreeMatches);
-                    if (matches == 0) throw new MailboxException(MailboxError.CredentialNotFound);
-                    // libsecret has already allocated the list. Bound application processing;
-                    // don't choose an unlocked match from an ambiguous locked/unlocked pair.
-                    nint item = 0;
-                    var paths = new HashSet<string>(StringComparer.Ordinal);
-                    var count = 0;
-                    for (var node = matches; node != 0; node = Marshal.ReadIntPtr(node, IntPtr.Size))
-                    {
-                        if (++count > 4096) throw new MailboxException(MailboxError.CredentialAmbiguous);
-                        var candidate = Marshal.ReadIntPtr(node);
-                        var path = BoundedText(g_dbus_proxy_get_object_path(candidate), 4096);
-                        if (path is null) throw new MailboxException(MailboxError.CredentialInvalid);
-                        paths.Add(path);
-                        if (paths.Count > 1) throw new MailboxException(MailboxError.CredentialAmbiguous);
-                        item = candidate;
-                    }
-                    Check();
-                    var actual = secret_item_get_attributes(item);
-                    try
-                    {
-                        if (actual == 0) throw new MailboxException(MailboxError.CredentialInvalid);
-                        foreach (var pair in RequiredAttributes(selector.ItemId))
-                            if (g_strcmp0(g_hash_table_lookup(actual, pair.Key), pair.Value) != 0)
-                                throw new MailboxException(MailboxError.CredentialInvalid);
-                    }
-                    finally { if (actual != 0) g_hash_table_unref(actual); }
-                    if (secret_item_get_locked(item) != 0) throw new MailboxException(MailboxError.CredentialLocked);
-                    var loaded = Await(cb => secret_item_load_secret(item, cancellable, cb, 0),
-                        r => { var ok = secret_item_load_secret_finish(item, r, out var e); return (ok, e); });
-                    if (loaded == 0) throw new MailboxException(MailboxError.CredentialInvalid);
-                    value = secret_item_get_secret(item);
-                    if (value == 0) throw new MailboxException(MailboxError.CredentialInvalid);
+                    attributes = NewAttributes(selector);
+                    // Preserve native length so embedded NUL and oversized values cannot be
+                    // silently truncated by a NUL-terminated text-password conversion.
+                    value = Await(cb => secret_service_lookup(service, 0, attributes, cancellable, cb, 0),
+                        r => { var v = secret_service_lookup_finish(service, r, out var e); return (v, e); }, secret_value_unref);
+                    if (value == 0) throw new MailboxException(MailboxError.CredentialNotFound);
                     var contentType = BoundedText(secret_value_get_content_type(value), 128);
                     if (contentType is not ("text/plain" or "text/plain; charset=utf-8" or "text/plain; charset=UTF-8"))
                         throw new MailboxException(MailboxError.CredentialInvalid);
@@ -269,9 +242,7 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
                         while (!destroyed) g_main_context_iteration(context, 1);
                     }
                     if (value != 0) secret_value_unref(value);
-                    if (matches != 0) FreeMatches(matches);
                     if (attributes != 0) g_hash_table_unref(attributes);
-                    if (collection != 0) g_object_unref(collection);
                     if (service != 0) g_object_unref(service);
                     if (connection != 0)
                     {
@@ -287,13 +258,14 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
             catch { lease?.Dispose(); throw; }
             finally
             {
-                if (cancellable != 0) g_object_unref(cancellable);
                 while (g_main_context_pending(context) != 0) g_main_context_iteration(context, 0);
+                if (cancellable != 0) g_object_unref(cancellable);
                 g_main_context_pop_thread_default(context);
                 g_main_context_unref(context);
                 GC.KeepAlive(callbacks);
                 GC.KeepAlive(ownerCallback);
                 GC.KeepAlive(subscriptionDestroyed);
+                GC.KeepAlive(cancelCallback);
             }
         }
 
@@ -305,10 +277,7 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
             return null;
         }
 
-        private static KeyValuePair<string, string>[] RequiredAttributes(string id) =>
-            [new("application", "protonmail-mcp"), new("purpose", "bridge-imap-password"), new("id", id)];
-
-        private static nint NewAttributes(string id)
+        private static nint NewAttributes(KeyringSelector selector)
         {
             var library = NativeLibrary.Load(GLib);
             try
@@ -316,16 +285,15 @@ internal sealed class LibsecretPasswordSource(KeyringSelector selector) : IPassw
                 var table = g_hash_table_new_full(NativeLibrary.GetExport(library, "g_str_hash"),
                     NativeLibrary.GetExport(library, "g_str_equal"), NativeLibrary.GetExport(library, "g_free"),
                     NativeLibrary.GetExport(library, "g_free"));
-                foreach (var pair in RequiredAttributes(id)) g_hash_table_insert(table, g_strdup(pair.Key), g_strdup(pair.Value));
-                return table;
+                try
+                {
+                    g_hash_table_insert(table, g_strdup("application"), g_strdup(selector.Application));
+                    g_hash_table_insert(table, g_strdup("account"), g_strdup(selector.Account));
+                    return table;
+                }
+                catch { g_hash_table_unref(table); throw; }
             }
             finally { NativeLibrary.Free(library); }
-        }
-
-        private static void FreeMatches(nint list)
-        {
-            for (var node = list; node != 0; node = Marshal.ReadIntPtr(node, IntPtr.Size)) g_object_unref(Marshal.ReadIntPtr(node));
-            g_list_free(list);
         }
     }
 }
